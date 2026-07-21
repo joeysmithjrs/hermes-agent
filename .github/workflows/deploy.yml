@@ -1,0 +1,40 @@
+name: Deploy to production
+
+# Redeploys the self-hosted Hermes gateway on merge to main.
+#
+# The actual deploy logic lives entirely on the server, in
+# /home/hermes/deploy.sh, and is forced via the deploy key's
+# `command=` restriction in authorized_keys — this workflow cannot run
+# anything else on the server even if it wanted to. deploy.sh runs
+# `hermes update --yes --backup` (git pull + dependency reinstall +
+# pre-update snapshot + hermes's own post-pull syntax/rollback guard),
+# then verifies hermes-gateway.service comes back active, falling back
+# to an explicit graceful reload if needed. See hermes_cli/main.py's
+# update command and website/docs/getting-started/updating.md for what
+# happens on the server side.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: hermes-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Set up deploy key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.HERMES_DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.HERMES_SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Run deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "hermes@${{ secrets.HERMES_SERVER_HOST }}" "deploy"
