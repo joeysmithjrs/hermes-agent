@@ -12,9 +12,12 @@ Hermes-native **code-defined multi-agent workflow** design for `joeysmithjrs/her
 | [EXAMPLES](./2026-07-29-workflow-dispatch-examples.md) | Linear, fanout+gate, PM desk, cron/webhook |
 | [TEST PLAN](./2026-07-29-workflow-dispatch-test-plan.md) | Hermetic tests + failure matrix |
 | [PHASES](./2026-07-29-workflow-dispatch-phases.md) | MVP → production plan |
-| [examples/](./minimal_workflow.py) · (./minimal_workflow.yaml) | Sketch py/yaml |
+| [AUDIT](./AUDIT.md) | Adversarial audit · SHIP-WITH-FIXES |
+| [IMPL_DIRECTIVE](./IMPL_DIRECTIVE.md) | **Claude Code implementation law** |
+| [CC_LAUNCH](./CC_LAUNCH.md) | How to spawn the multi-model swarm |
+| [CC_PROMPT_SHORT](./CC_PROMPT_SHORT.md) | Compact `-p` seed |
+| [minimal_workflow.py](./minimal_workflow.py) · [minimal_workflow.yaml](./minimal_workflow.yaml) | Sketches |
 | [SUMMARY](./SUMMARY.md) | Status package |
-| [GOAL](../GOAL_workflow_dispatch.md) | Original brief |
 
 ## One-liner
 
