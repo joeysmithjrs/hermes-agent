@@ -67,18 +67,18 @@ claude --model z-ai/glm-5.2 --dangerously-skip-permissions ...
 |------------|-------|---------|
 | `scout-glm` | `z-ai/glm-5.2` | Cheap codebase map, “where is X?” |
 | `think-inkling` | `thinkingmachines/inkling` | IR edge cases, status machines, resume invariants |
-| `reason-grok` | `x-ai/grok-4.5` | Adversarial review of design compliance / PR risk |
-| `build-terra` | `gpt-5.6-terra` | Core package implementation |
-| `code-kimi` | `moonshotai/kimi-k3` | Tests + glue + CLI polishing |
+| `build-grok` | `x-ai/grok-4.5` | **Primary implementer** — core `workflow/` package |
+| `code-kimi` | `moonshotai/kimi-k3` | Tests + glue + CLI polishing (pair with grok) |
 | `code-kimi-code` | `moonshotai/kimi-k2.7-code` | Dense codegen bursts if needed |
+| `review-terra` | `gpt-5.6-terra` | **Adversarial reviewer** — AUDIT/AGENTS/acceptance |
 
 ### Swarm protocol (orchestrator-enforced)
 
 1. **Scout (glm)** — map hermes CLI registration, `delegate_task`, `hermes_state` sqlite helpers, config.yaml patterns. Return file:line map only.  
 2. **Think (inkling)** — confirm Phase 1 state machine + store layout against design §2/§4 + AUDIT F1/F6/F7. Write short `IMPLEMENTATION_CHECKLIST.md` in specs folder if gaps.  
-3. **Build (terra)** — implement `workflow/` package + soft CLI register.  
-4. **Code/tests (kimi)** — `tests/workflow/` hermetic FakeWorker suite.  
-5. **Reason (grok)** — adversarial pass: AGENTS.md footprint, AUDIT F-list, no sacred-file touch. Produce `REVIEW_NOTES.md` or inline PR body section.  
+3. **Build (grok)** — implement `workflow/` package + soft CLI register (primary coder).  
+4. **Code/tests (kimi)** — `tests/workflow/` hermetic FakeWorker suite; support grok on CLI polish.  
+5. **Review (terra)** — adversarial pass: AGENTS.md footprint, AUDIT F-list, no sacred-file touch. Produce `REVIEW_NOTES.md` or inline PR body section.  
 6. **Orchestrator** — integrate, run pytest, fix, commit, optionally open PR (**do not merge** unless Joe says).
 
 Do **not** burn Opus. Stay on OpenRouter ids above. Terra bare id is `gpt-5.6-terra` (not `openai/gpt-5.6-terra` as catalog model — CCR rewrites upstream).
