@@ -20,18 +20,30 @@ Follow Hermes practice: hermetic `HERMES_HOME` temp dirs, no live network unless
 ## 2. Unit cases
 
 ### Verifier
-- [ ] rejects cycle (A→B→A)  
-- [ ] accepts map-over-list graph  
-- [ ] rejects unreachable node  
-- [ ] rejects join with <1 logical fanout source  
-- [ ] rejects fanout without downstream join/map (warning or error per design)  
-- [ ] rejects agent missing prompt  
-- [ ] rejects unknown model id (mocked registry)  
-- [ ] rejects gate without channel/approver  
-- [ ] rejects `dangerously_skip` / equivalent flags in IR  
-- [ ] budget worst-case fanout × branch cost exceeds max → reject  
-- [ ] template var unknown → reject  
-- [ ] conditional edge bad port → reject  
+- [ ] rejects cycle (A→B→A)
+- [ ] accepts map-over-list graph
+- [ ] rejects unreachable node
+- [ ] rejects join with <1 logical fanout source
+- [ ] rejects fanout without downstream join/map (warning or error per design)
+- [ ] rejects agent missing prompt
+- [ ] rejects unknown model id (mocked registry)
+- [ ] rejects gate without channel/approver
+- [ ] rejects `dangerously_skip` / equivalent flags in IR
+- [ ] budget worst-case fanout × branch cost exceeds max → reject
+- [ ] template var unknown → reject
+- [ ] conditional edge bad port → reject
+- [ ] **fanout/map missing `max_branches` → reject** (audit)
+- [ ] **live/side-effecting-tool node reachable without a gate → reject** (audit)
+- [ ] **`run:` callable not in registered allowlist → reject** (audit; `os.system` must be rejected)
+- [ ] **gate `on_timeout: approve_auto` with `dual_control: true` → reject** (audit)
+- [ ] **agent node setting `tools`/`profile`/`model` in Phase 1 → reject (or warn behind flag)** (audit)
+- [ ] **side-effecting agent node missing `side_effects: external` → reject** (audit)
+
+### Store / resume invariants (audit)
+- [ ] fanout N branches → N distinct `nodes/<node_run_id>/output.json`, no overwrite (audit P0)
+- [ ] `side_effects: external` agent node, kill after side-effect emitted before commit → resume sets node `failed` (INTERRUPTED), does NOT re-run; side-effect call count == 1 (audit)
+- [ ] fanout `over:` list > `max_branches` → node `failed` (CARDINALITY), exactly `max_branches` spawned (audit)
+- [ ] run parked at gate → `RunEnvelope.status == awaiting_gate` (audit)
 
 ### Expr / templates
 - [ ] `{{ a.output.x }}` resolution  

@@ -126,7 +126,16 @@ awaiting_gate      # blocked on a gate decision
 ```
 
 Node lifecycle: `pending → ready → running → {succeeded|failed|awaiting_gate|skipped|cancelled}`.
-Run lifecycle: `pending → running → {succeeded|failed|partial|cancelled}`.
+Run lifecycle: `pending → running → {succeeded|failed|partial|cancelled|awaiting_gate|paused}`.
+
+> `awaiting_gate` is a **run-level** status (not only node-level): when a `gate`
+> node parks, the run transitions `running → awaiting_gate` and the
+> `RunEnvelope.status` reflects it. `paused` covers run-level budget
+> circuit-break (the run emits a continue/stop gate). A gated run with some
+> nodes succeeded and the rest pending is `awaiting_gate`, **not** `partial` —
+> `partial` requires ≥1 node *failed* (recoverable on resume) with no active
+> gate. The api §11 error table's "awaiting_gate or paused" run statuses refer
+> to these enum members.
 
 ### 2.6 Standard completion envelope
 
@@ -145,8 +154,8 @@ Every node emits one envelope into the artifact store. The run emits one too.
   "port": "pass",                    // chosen output port (null if single)
   "output": { … node output_schema value … },
   "error": null,                     // ErrorObject when status in {failed,cancelled}
-  "artifact_ref": "runs/wf_../nodes/prepare/output.json",  // $HERMES_HOME/workflows/...
-  "events": ["events/wf_..__prepare__1.jsonl"]   // event-log refs
+  "artifact_ref": "runs/wf_../nodes/<node_run_id>/output.json",  // keyed by node_run_id
+  "events": ["nodes/<node_run_id>/events.jsonl"]   // event-log refs (per-execution)
 }
 ```
 
@@ -154,7 +163,7 @@ Every node emits one envelope into the artifact store. The run emits one too.
 // RunEnvelope  (terminal)
 {
   "run_id": "wf_…", "attempt_id": 2, "workflow_id": "pm_desk",
-  "status": "partial",             // succeeded | failed | partial | cancelled
+  "status": "partial",             // succeeded | failed | partial | cancelled | awaiting_gate | paused
   "succeeded": ["seed","directive","dq","dd"],   // node ids
   "failed":  ["eval"],
   "skipped": ["exec"],
@@ -232,7 +241,7 @@ nodes:
     run: pm_desk.seed_branches
   - id: directive
     kind: fanout
-    over: "{{ seed.branches }}"
+    over: "{{ seed.output.branches }}"
     branch: { kind: agent, spec: { prompt: "directive {{ branch.template }}",
             tools: [web_search, read_file] } }
   - id: dq
@@ -318,8 +327,8 @@ $HERMES_HOME/workflows/
   runs/<run_id>/
     run.json                            # RunRecord: status, attempt_id, node states
     checkpoint.json                     # last-committed node-run statuses (atomic write)
-    nodes/<node_id>/output.json         # node output envelope value
-    nodes/<node_id>/events.jsonl        # per-node event log
+    nodes/<node_run_id>/output.json     # node output envelope value — keyed by NODE_RUN_ID, not node_id
+    nodes/<node_run_id>/events.jsonl     # per-node-execution event log
     artifacts/                          # large blobs (DD memos, source graphs)
     gate_signals/<gate_id>.json         # pending/decided gate state
     run_output.json                     # terminal RunEnvelope
@@ -327,12 +336,24 @@ $HERMES_HOME/workflows/
                                         #   started, ended, cost; queryable for `status`
 ```
 
+> **Path keying (P0 invariant).** Node bodies live under `nodes/<node_run_id>/`,
+> **not** `nodes/<node_id>/`. A `fanout`/`map` node produces N branch
+> executions, each with its own `node_run_id` (`<run_id>__<node_id>__<branch>__<attempt>`).
+> Keying by `node_id` alone would make the N branch `output.json` files
+> overwrite each other — so every per-execution artifact (output, events,
+> artifacts) is namespaced by `node_run_id`. `node_id` is only used for the
+> *definition* (which nodes exist), never for run state.
+
 Choice: **filesystem is the source of truth** for run/node/envelope bodies
 (simple, diff-able, debuggable by hand); **sqlite is an index** for listing/
 filtering (mirrors the hermes_state.py SessionDB pattern of SQLite-over-files).
 This avoids a heavy DB migration and keeps each run a self-contained directory —
 easy to `tar`, `rsync`, or inspect. Atomic writes via temp-file + `os.replace`
-for crash safety; checkpoint write is the commit point.
+for crash safety; checkpoint write is the commit point. **sqlite hardening must
+reuse `hermes_state.py`'s on-disk journal-mode / WAL / NFS detection and the
+macOS checkpoint-barrier helpers** (currently private to that module) — either
+import them or extract a shared `hermes_db_util`. Do **not** re-derive
+journal-mode handling; the NFS/FUSE failure modes are subtle and already solved.
 
 ### 4.4 Resume after crash
 
@@ -352,6 +373,20 @@ yields equivalent text); `script` nodes that mutate external state declare a
 non-idempotent `script` nodes without an explicit `idempotent: true|attempts`
 declaration adjacent to mutating calls.
 
+**Side-effecting agent nodes (resume hazard):** the "re-queue `running`→`ready`
+on resume" rule is **unsafe** for agent nodes whose tools mutate external state
+(e.g. `exec` placing trades, an agent node that sends an email). A crash after
+such a node has emitted side effects but before its envelope commits would, on
+resume, re-run the node and double-execute the side effect. Therefore: agent
+nodes with any declared side-effecting/live tool MUST declare `side_effects:
+external` and are **never** auto-requeued `running→ready` on resume — they go to
+`failed` (code `INTERRUPTED`) and require explicit `--retry-failed` (or a
+`--from` re-run with the operator confirming the prior effect). A node with
+`side_effects: external` and `attempts: 1` will not retry at all. Memo-only
+agent nodes (no side-effecting tools) keep the safe `running→ready` requeue.
+The verifier rejects a side-effecting agent node lacking the `side_effects`
+declaration, so authors cannot silently ship a double-exec hazard.
+
 ### 4.5 Status query
 
 `hermes workflow status <run_id>` → reads `index.sqlite` (fast path) and falls
@@ -369,11 +404,11 @@ category:
 | category | checks |
 |---|---|
 | **structure** | acyclic (or an explicit `map`/gate cycle construct — §4 note); single entry; ≥1 terminal; no unreachable nodes; every `join` has ≥2 upstreams or is a `map` reducer; no `fanout` without a downstream `join`/`map` |
-| **references** | every `over:`/`from:`/`run:`/`output:` resolves to a real node/callable/schema; no unknown model ids (checked against the provider registry); `port` targets exist |
-| **gates** | every `gate` has a `channel` + ≥1 `approver`; `on_timeout` ∈ {block, shelve, approve-auto}; a gate with `auto` action requires `dual_control: false` and emits a lint *warning* (security) |
-| **budget** | declared per-node `budget_usd` and a run-level `max_budget_usd`; verifier sums the *worst-case* fanout cardinality × branch cost and rejects runs that could exceed the cap without a gate before the expensive node |
-| **sandbox** | `script` nodes declare an `allow` tool/env list; mutating scripts flagged; no node may reference `dangerously-skip-approvals`-style flags by default |
-| **prompts** | every `agent` node has a non-empty `prompt`; template variables (`{{ }}`) all resolve against upstream outputs or run inputs |
+| **references** | every `over:`/`from:`/`run:`/`output:` resolves to a real node/callable/schema; no unknown model ids (checked against the provider registry); `port` targets exist; `over:`/template paths use the canonical `{{ node_id.output.field }}` form (bare `{{ node_id.field }}` is a shorthand for `.output` — resolved identically, never to the envelope wrapper) |
+| **gates** | every `gate` has a `channel` + ≥1 `approver`; `on_timeout` ∈ {block, shelve, approve_auto}; **`approve_auto` is hard-rejected when `dual_control: true`** (a dual-control gate that auto-approves on timeout is a contradiction); `approve_auto` is allowed only with explicit `dual_control: false` and emits a lint *warning* (security). **Live-tool gating:** any node whose `tools` include a declared `live`/side-effecting tag MUST have a `gate` node on every path into it — the verifier rejects a live node reachable without crossing a gate. The "default-on for `proposes_live`" property is enforced here, not left to author discipline. |
+| **budget** | declared per-node `budget_usd` and a run-level `max_budget_usd`; every `fanout`/`map` MUST declare `max_branches` (required, not optional — the `over:` list is runtime data, unknowable at compile time); the verifier sums the *worst-case* `max_branches × branch cost` and rejects runs that could exceed the cap without a gate before the expensive node. At **runtime**, the driver hard-fails a fanout node (status `failed`, code `CARDINALITY`) if the materialized list exceeds `max_branches`, and the per-node/per-branch `budget_usd` is checked **at each branch spawn**, not just summed — the sum is unknowable pre-run. |
+| **sandbox** | `script` nodes declare an `allow` tool/env list; mutating scripts flagged; no node may reference `dangerously-skip-approvals`-style flags by default; **`run:` callables resolve only from a registered allowlist** (a `workflow_scripts` namespace or an explicit reducer/callable registry) — NOT arbitrary dotted import (`os.system` is importable). The verifier rejects a `run:` that is not registered. |
+| **prompts** | every `agent` node has a non-empty `prompt` (string, `{file: path}`, or the YAML shorthand `prompt_file: path`); template variables (`{{ }}`) all resolve against upstream outputs or run inputs |
 
 Cycles: v1 graphs are **acyclic**. Iteration is `map` over a *materialized list*
 (produced by an upstream `script`/`agent` node), not a `while`. True cyclic
@@ -406,11 +441,32 @@ Each `agent` (and `fanout`/`map` branch) node carries:
 }
 ```
 
-**Profile isolation:** when `profile` is set, the worker runs under a separate
-`HERMES_HOME` slice (`get_hermes_home()` already scopes per profile —
-`_apply_profile_override()` in `hermes_cli/main.py`). Workers that share state
-use a `persistent` workspace dir threaded across stages (mirrors the reference
-repo's `workspace_kind: dir`); ephemeral nodes use `scratch`.
+**Profile isolation (honest scope):** when `profile` is set, the worker must
+run under a separate `HERMES_HOME`. **This requires a process boundary**, not an
+in-process thread. `get_hermes_home()` (`hermes_constants.py`) resolves
+`HERMES_HOME` from the process environment, which `_apply_profile_override()`
+(`hermes_cli/main.py`) sets **once at CLI startup**; background delegation
+(`delegate_task` `background=True`) runs children on a shared in-process
+`ThreadPoolExecutor`, so all children inherit the driver process's single
+`HERMES_HOME`. Therefore:
+
+- The **inherit path (§7)** — `delegate_task` in-process — **cannot honor
+  `profile`**, `model`, `tools`, `max_turns`, `budget_usd`, or `workspace` on a
+  per-node basis. It honors only `prompt` (rendered to `goal`) and `context`
+  (mapped inputs). In Phase 1 the verifier **rejects** (or, behind a flag,
+  *warns*) any agent node that sets `profile`/`model`/`tools`/`max_turns`/\
+  `workspace`, because the inherit runtime would silently ignore a security
+  boundary (e.g. a `tools` allowlist or a `trader-paper` profile tag).
+- The **override path (§7, Phase 2)** honors these by spawning the worker as a
+  **subprocess** (or via the ACP/subprocess delegation transport) with the
+  profile's `HERMES_HOME` env. This is the only path that delivers true per-node
+  profile/path isolation and tool allowlist enforcement. Until it lands, the
+  security properties in §8 that depend on `tools`/`profile` are **not enforced**
+  — they are Phase 2 deliverables (see phases.md).
+
+Workers that share state use a `persistent` workspace dir threaded across stages
+(mirrors the reference repo's `workspace_kind: dir`); ephemeral nodes use
+`scratch`. Persistent workspaces are scoped *within a run*; never across runs.
 
 **Input/output contracts:** `input` maps upstream envelopes into the node's
 prompt context; `output` is a JSON schema the envelope is validated against
@@ -468,10 +524,20 @@ core touch, feature-flagged behind `workflow.enabled`.
   never collide. Within a profile, run dirs are unique per `run_id`; the sqlite
   index enforces it. Worker workspaces are per-node, per-run — never shared
   across runs (persistent workspaces are *within* a run).
-- **Sandbox for `script` nodes.** `script` runs in a subprocess with an explicit
-  `allow` env/PATH and a working dir = the node's workspace; network is denied
-  unless `allow: [network]` is declared and the node is pre-gate. Mutating
-  scripts require `idempotent`/`attempts` declarations (§4.4).
+- **Sandbox for `script` nodes (honest scope).** `script` runs in a subprocess
+  with a restricted env/PATH, working dir = the node's workspace, and a
+  **registered, allowlisted `run:` callable** (§5) — never arbitrary dotted
+  import. **A Python parent process cannot enforce "network denied" by env/PATH
+  alone** — a subprocess can open sockets unless isolated at the OS level. So
+  `allow: [network]` is a *declaration* gate, not a *capability* wall: the
+  default is "no network-bearing tools/modules are wired to the callable," and
+  true network egress denial requires an OS-level boundary (Linux `landlock`/
+  a `netns`, or running the script in a seccomp-restricted runner). The spec
+  commits to the **declaration + flag** model for v1 and **lists OS-level
+  isolation as a Phase 3 hardening item**; the verifier must not advertise
+  network denial as enforced until that lands. Mutating scripts require
+  `idempotent`/`attempts` declarations (§4.4); side-effecting agent nodes
+  require `side_effects: external` (§4.4).
 
 ---
 
@@ -527,7 +593,7 @@ Mapping from the vault note's canonical loop to primitives:
 | Eval fan-out | `join` `eval` reduce `scorecards` | independent scorers; "majority should still die" → default-reject bias in reducer |
 | Execution plan (frozen) | `agent` `plan`, output `PLAN_SCHEMA`; edge `proposes_live`→`gate` | "frozen means exec does not freestyle" → exec node has no `directive` tool, only trade tools |
 | Dual-control | `gate` `freeze` channel=telegram, approvers=[joe], on_timeout=shelve | maps the vault's "Approve if live" / dual-control rows directly |
-| Execution ∥ Monitoring | `agent` `exec` ∥ `fanout` `monitor` over `watchers` | parallel; monitor may abort/reduce/hold per plan — encoded as gate-conditional edges back to exec |
+| Execution ∥ Monitoring | `agent` `exec` ∥ `fanout` `monitor` over `watchers` | parallel; **v1 monitors observe + report only** (scribe folds their findings into the postmortem). Mid-flight abort/hold of `exec` by a running monitor requires a *control-signal* primitive (one running node cancelling another) that v1 edges do not model — edges fire on *completion*, not mid-run. Deferred to Phase 3; do not claim mid-flight abort in v1. |
 | Post-exec scribing & notify | `join` `scribe` from [exec, *monitor], reduce `postmortem` | writes back to Prepare via **trigger chain** (scribe emits cron/webhook → new run) |
 | Autonomy boundaries table | per-node `tools` allowlists + `gate` defaults | "Change thesis mid-flight: No" → no node has a `replan` tool after `plan` |
 

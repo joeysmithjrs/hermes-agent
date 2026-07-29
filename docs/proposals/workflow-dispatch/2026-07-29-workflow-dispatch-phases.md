@@ -14,27 +14,41 @@
 ## Phase 1 — MVP runner (fork only / feature-flagged)
 
 ### Scope
-- Package `workflow/` with IR, YAML load, verifier (structure+refs+gates basic)  
-- Filesystem store + sqlite index  
-- Driver supporting: `agent` (inherit/`delegate_task` only), `script`, linear edges, simple `fanout`+`join` (reduce concat/top_k)  
-- CLI: validate, compile, run, status, logs, resume, cancel  
-- `config.workflow.enabled` default **false**  
-- Hermetic unit + FakeWorker integration tests  
+- Package `workflow/` with IR, YAML load, verifier (structure+refs+gates basic)
+- Filesystem store + sqlite index — **node bodies keyed by `node_run_id`, not `node_id`** (fanout branches must not collide)
+- Driver supporting: `agent` (inherit/`delegate_task` only — honors `prompt`→`goal` + `context` ONLY), `script`, linear edges, simple `fanout`+`join` (reduce concat/top_k) with `max_branches` enforced + per-branch budget check
+- CLI: validate, compile, run, status, logs, resume, cancel
+- `config.workflow.enabled` default **false**
+- Hermetic unit + FakeWorker integration tests
+
+### Phase 1 inherit-path limitation (must be explicit)
+The Phase 1 worker is the **inherit path only** (`delegate_task`, in-process
+threads). It **cannot honor** `model`, `tools`, `profile`, `max_turns`,
+`workspace`, or `side_effects` isolation — `delegate_task`'s signature takes none
+of these and threads share one process-wide `HERMES_HOME`. Therefore the Phase 1
+verifier **rejects** (or warns behind `workflow.phase1_warn_overrides`) any agent
+node that sets an override-only field, so a `tools` allowlist or `profile` tag is
+never silently dropped. `tools`/`profile`/model enforcement and true per-node
+profile isolation are **Phase 2** (override path / subprocess). Side-effecting
+agent-node resume safety (`side_effects: external`) and `max_branches` runtime
+capping ARE in Phase 1 (they are verifier + driver concerns, not worker-shim).
 
 ### Out of Phase 1
-- conversation tool  
-- per-node model override path  
-- webhook/cron native fields  
-- kanban adapter  
-- map sugar  
+- conversation tool
+- per-node model/tools/profile override path (worker shim) — and with it, tool-allowlist & profile-isolation *enforcement*
+- webhook/cron native fields
+- kanban adapter
+- map sugar
 - budget worst-case fanout verifier (can be warn-only)
 
 ### Acceptance
-1. `linear_brief` yaml runs end-to-end with FakeWorker.  
-2. Fanout 3 → join produces 3 branch envelopes.  
-3. Kill -9 driver mid-run; `resume` completes without double-finalizing succeeded nodes.  
-4. `hermes --help` works if `workflow` import fails.  
-5. Zero files changed in `run_agent.py`.  
+1. `linear_brief` yaml runs end-to-end with FakeWorker (note: its `tools:` are *stored* not *enforced* in Phase 1 — see inherit limitation).
+2. Fanout 3 → join produces 3 branch envelopes, each under its own `nodes/<node_run_id>/output.json` (no path collision).
+3. Kill -9 driver mid-run; `resume` completes without double-finalizing succeeded nodes; a `side_effects: external` agent node resumes to `failed` (not auto-requeued) — verified with a FakeWorker that records a side-effect call count.
+4. Fanout `over:` a list exceeding `max_branches` → node `failed` code `CARDINALITY`, no overspawn.
+5. Verifier rejects an agent node setting `tools`/`profile`/`model` in Phase 1 (or warns behind flag).
+6. `hermes --help` works if `workflow` import fails.
+7. Zero files changed in `run_agent.py`.  
 
 ### Exit criteria for merge to fork `main`
 Phase 1 tests green; docs link from README optional section behind flag.

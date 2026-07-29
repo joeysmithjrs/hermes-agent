@@ -64,14 +64,16 @@ Install: ordinary package import inside Hermes tree. No new pip dep beyond PyYAM
   "id": "prepare",                 // [a-z][a-z0-9_]{0,63}
   "kind": "agent",                 // agent|script|fanout|join|gate|map|cron_trigger|webhook_trigger
   "spec": { /* NodeSpec */ },      // required for agent; optional for others
-  "run": "pm_desk.seed_branches",  // dotted callable for script|join reducer
-  "over": "{{ seed.branches }}",   // fanout/map source path
+  "run": "pm_desk.seed_branches",  // registered/allowlisted callable for script|join reducer (NOT arbitrary import)
+  "over": "{{ seed.output.branches }}",  // fanout/map source — canonical form node.output.field; bare node.field == .output shorthand
+  "max_branches": 50,              // REQUIRED on fanout/map — runtime hard cap; list is runtime data, unverifiable pre-run
   "from": ["directive"],           // join upstreams (or use edges)
-  "reduce": { "type": "top_k", "k": 3 },
+  "reduce": { "type": "top_k", "k": 3 },  // type selects a built-in reducer; if a custom reducer is needed, set run: too
   "branch": { /* Node nested — agent/script template for fanout/map */ },
   "ports": ["pass", "fail"],       // optional named outputs
   "attempts": 1,                   // re-exec budget
-  "idempotent": true
+  "idempotent": true,              // required for mutating scripts
+  "side_effects": "none"           // none|external — REQUIRED (=external) for agent nodes with live/side-effecting tools
 }
 ```
 
@@ -90,13 +92,13 @@ Install: ordinary package import inside Hermes tree. No new pip dep beyond PyYAM
 
 ```jsonc
 {
-  "model": "anthropic/claude-sonnet-4",
+  "model": "anthropic/claude-sonnet-5",
   "provider": null,                // derived if omitted
-  "prompt": "…",                   // string or { "file": "prompts/prepare.md" }
+  "prompt": "…",                   // string, { "file": "prompts/prepare.md" }, or YAML shorthand prompt_file: path
   "skills": ["polymarket"],
   "tools": ["web_search", "read_file"],
   "deny_tools": [],
-  "profile": null,                 // optional profile name → HERMES_HOME slice
+  "profile": null,                 // optional profile name → separate HERMES_HOME (requires override path / subprocess — Phase 2)
   "timeout_s": 1200,
   "max_turns": 40,
   "budget_usd": 0.5,
@@ -104,6 +106,15 @@ Install: ordinary package import inside Hermes tree. No new pip dep beyond PyYAM
   "input": { "desk_state": "{{ prepare.output }}" },
   "output": { "$ref": "schemas/desk_state.json" }
 }
+
+> **Enforcement phase:** `model`, `tools`, `profile`, `max_turns`, `workspace`
+> are honored only by the **override path** (`workflow.worker`, Phase 2). In
+> Phase 1 the inherit path (`delegate_task`) honors `prompt`→`goal` and
+> `context` only; the Phase 1 verifier rejects agent nodes setting the
+> override-only fields (or warns behind a flag) so a security boundary is
+> never silently ignored. Model ids must match the real Hermes provider/model
+> registry format — verify the canonical id shape before the verifier's
+> "unknown model" check (don't assume the `provider/model` prefix).
 ```
 
 ### 2.5 Gate
@@ -114,7 +125,7 @@ Install: ordinary package import inside Hermes tree. No new pip dep beyond PyYAM
   "channel": "telegram",
   "approvers": ["joe"],
   "timeout_s": 86400,
-  "on_timeout": "shelve",          // shelve|block|approve_auto
+  "on_timeout": "shelve",          // shelve|block|approve_auto — approve_auto HARD-REJECTED when dual_control:true
   "dual_control": true,
   "notify": true
 }

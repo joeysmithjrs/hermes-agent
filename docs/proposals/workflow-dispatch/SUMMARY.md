@@ -1,8 +1,9 @@
 # SUMMARY — Workflow Dispatch Spec Package
 
-**Status:** DONE (spec package complete)  
-**Date:** 2026-07-29  
-**Branch/worktree:** `feat/workflow-dispatch` @ `/home/hermes/research/hermes-workflow-dispatch`  
+**Status:** DONE (spec package complete) · **AUDITED 2026-07-29**
+**Audit verdict:** SHIP-WITH-FIXES (see `AUDIT.md`). 1 P0 + 9 P1s patched in-place across design/api/phases/test-plan/examples; P2/P3s documented with proposed corrections.
+**Date:** 2026-07-29
+**Branch/worktree:** `feat/workflow-dispatch` @ `/home/hermes/research/hermes-workflow-dispatch`
 **Fork:** `joeysmithjrs/hermes-agent`
 
 ## What happened with Claude Code
@@ -41,6 +42,16 @@ Workflows compile (Python DSL or YAML) to a **verified acyclic IR**. A **determi
 4. Telegram gate verb parsing ownership (gateway vs skill)  
 5. Profile billing: child spend attribution into RunEnvelope cost field  
 6. Accept/amend CC design D3–D6 after Joe review  
+
+### Audit-added residual questions (see AUDIT.md)
+
+7. Trigger-chain via cron `context_from` vs explicit `--input-file` plumbing (AUDIT F12)
+8. Short-circuit reducers (`first_k`/`majority`) must cancel remaining branch node-runs (AUDIT F14)
+9. Confirm a reusable importable child-`AIAgent` construction helper before "no second spawning implementation" claim (AUDIT F15)
+10. `run_id` should be uuid4-based, not index-caught-after-creation (AUDIT F17)
+11. Define the secret-bearing tool tag set for the verifier (AUDIT F18)
+12. Gate-signal HTTP route is Phase 3, not P2 (AUDIT F20)
+13. Confirm real model-id format vs `anthropic/claude-sonnet-5` for the unknown-model check (AUDIT api §2.4)
 
 ## Suggested next action
 

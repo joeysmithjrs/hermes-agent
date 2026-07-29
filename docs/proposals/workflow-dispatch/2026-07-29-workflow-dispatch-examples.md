@@ -145,6 +145,7 @@ nodes:
   - id: directive
     kind: fanout
     over: "{{ seed.output.branches }}"
+    max_branches: 12          # runtime hard cap; seed may return fewer
     branch:
       kind: agent
       spec:
@@ -188,6 +189,7 @@ nodes:
 
   - id: exec
     kind: agent
+    side_effects: external    # places trades — never auto-requeued on resume
     spec:
       profile: trader-paper
       prompt_file: prompts/pm/exec.md
