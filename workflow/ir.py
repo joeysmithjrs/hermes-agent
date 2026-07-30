@@ -31,6 +31,9 @@ __all__ = [
     "ON_FAIL_POLICIES",
     "DEFAULT_ON_FAIL",
     "REDUCE_TYPES",
+    "DEBATE_PROTOCOLS",
+    "CHILD_NODE_KINDS",
+    "debate_participant_templates",
 ]
 
 # design §2.2 — only justified kinds
@@ -41,9 +44,25 @@ NODE_KINDS = (
     "join",
     "gate",
     "map",
+    "debate",
     "cron_trigger",
     "webhook_trigger",
 )
+
+# Post-Phase-3 §3 — convergence protocols for a `debate` node.
+#   vote            each round is tallied with the existing `majority` reducer
+#                   (runtime/scripts.py); a clean majority stops the debate early.
+#   judge_escalate  same rounds, but if the final round has no clean majority a
+#                   judge agent reads the whole history and picks (reducer
+#                   `judge_converge`).
+#   continue        no convergence requirement; run every round and concatenate.
+DEBATE_PROTOCOLS = ("vote", "judge_escalate", "continue")
+
+# A debate/supervisor node's children are always plain agents. Nesting a
+# debate inside a debate (or a supervisor inside either) is rejected at compile
+# time: it is the one shape that turns a bounded, auditable primitive into
+# unbounded recursive spend.
+CHILD_NODE_KINDS = ("agent",)
 
 # design §2.5 — run-level status enum (F7: includes awaiting_gate + paused)
 RUN_STATUSES = (
@@ -174,6 +193,15 @@ class Node:
     # DEFAULT_ON_FAIL, i.e. the Phase 1/2 skip-downstream cascade, so every
     # pre-Phase-3 workflow keeps exactly its old behavior.
     on_fail: Optional[str] = None
+    # Post-Phase-3 §3 — `debate` node fields.
+    #   directive:    {topic, objective?, threshold?, vote_key?, judge?, judge_model?}
+    #   max_rounds:   hard round cap (>= 1). A debate always terminates.
+    #   protocol:     see DEBATE_PROTOCOLS.
+    #   participants: int (clone `branch` N times) or a list of node templates.
+    directive: Optional[Dict[str, Any]] = None
+    max_rounds: Optional[int] = None
+    protocol: Optional[str] = None
+    participants: Optional[Any] = None
 
     @property
     def fail_policy(self) -> str:
@@ -197,6 +225,10 @@ class Node:
             idempotent=d.get("idempotent"),
             side_effects=d.get("side_effects"),
             on_fail=d.get("on_fail"),
+            directive=d.get("directive"),
+            max_rounds=d.get("max_rounds"),
+            protocol=d.get("protocol"),
+            participants=d.get("participants"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -215,8 +247,38 @@ class Node:
             "idempotent": self.idempotent,
             "side_effects": self.side_effects,
             "on_fail": self.on_fail,
+            "directive": self.directive,
+            "max_rounds": self.max_rounds,
+            "protocol": self.protocol,
+            "participants": self.participants,
         }
         return {k: v for k, v in d.items() if v not in (None, [], {}) or k in ("id", "kind")}
+
+
+def debate_participant_templates(n: "Node") -> Optional[List[Dict[str, Any]]]:
+    """Normalize a debate node's ``participants:`` into a list of node
+    templates, or None when the declaration is unusable.
+
+    Lives here, next to the IR it reads, because BOTH the verifier and the
+    driver have to answer "which children will this debate actually run?" and
+    they must never answer it differently — a verifier that counts three
+    participants while the driver runs two is exactly the kind of drift that
+    turns a compile-time guarantee into a decoration.
+
+    Two accepted forms:
+      ``participants: 3``      clone the node's ``branch:`` template 3 times.
+      ``participants: [ {...}, {...} ]``  distinct per-participant templates.
+    """
+    participants = n.participants
+    if isinstance(participants, bool):
+        return None
+    if isinstance(participants, int):
+        if not n.branch or participants < 1:
+            return None
+        return [dict(n.branch) for _ in range(participants)]
+    if isinstance(participants, list):
+        return list(participants)
+    return None
 
 
 @dataclass

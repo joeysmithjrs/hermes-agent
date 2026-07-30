@@ -11,14 +11,18 @@ from typing import Any, Dict, List, Optional, Set
 
 from .expr import TemplateError, validate_condition_syntax
 from .ir import (
+    CHILD_NODE_KINDS,
+    DEBATE_PROTOCOLS,
     Issue,
     Node,
+    NODE_KINDS,
     ON_FAIL_POLICIES,
     OVERRIDE_ONLY_FIELDS,
     REDUCE_TYPES,
     VerifiedIR,
     WorkflowIR,
     WorkflowRejected,
+    debate_participant_templates,
 )
 from .runtime import scripts as script_registry
 
@@ -105,7 +109,10 @@ def verify_ir(ir: WorkflowIR, *, phase1_warn_overrides: bool = False) -> Verifie
 
     # ---- structure: known kinds --------------------------------------------
     for n in ir.nodes:
-        if n.kind not in ("agent", "script", "fanout", "join", "gate", "map", "cron_trigger", "webhook_trigger"):
+        # ir.NODE_KINDS is the single source of truth (this list used to be a
+        # second, hand-maintained copy -- a new kind added to the IR but
+        # forgotten here would have been rejected as "unknown").
+        if n.kind not in NODE_KINDS:
             err("STRUCTURE", n.id, f"unknown node kind '{n.kind}'")
         if not n.id or not n.id.replace("_", "a").isalnum():
             err("STRUCTURE", n.id, "node id must be [a-z][a-z0-9_]*")
@@ -296,15 +303,19 @@ def _check_node(
                         )
         # Phase 3 §B: spec.tools must be a known tool or toolset name.
         _check_tools_unknown(n, err, warn)
-        # F6: side-effecting agent node must declare side_effects: external
-        if _has_live_tool(n):
-            if n.side_effects != "external":
-                err(
-                    "SIDE_EFFECTS",
-                    n.id,
-                    "agent node uses live/side-effecting tools but does not declare "
-                    "side_effects: external",
-                )
+
+    # F6: a node that will run live/side-effecting tools must declare
+    # side_effects: external. Applies to `debate`/`supervisor` too -- their
+    # CHILDREN do the tool-using, so reading only the parent's own spec.tools
+    # would let nesting sidestep the rule (see _child_templates_of).
+    if n.kind in ("agent", "debate", "supervisor") and _has_live_tool(n):
+        if n.side_effects != "external":
+            err(
+                "SIDE_EFFECTS",
+                n.id,
+                f"{n.kind} node uses live/side-effecting tools but does not declare "
+                "side_effects: external",
+            )
 
     # script must have a registered run callable (F4)
     if n.kind == "script":
@@ -391,16 +402,184 @@ def _check_node(
         if n.run and not script_registry.is_registered(n.run):
             err("SCRIPT", n.id, f"join run callable '{n.run}' is not registered (F4 allowlist)")
 
+    # debate: directive + bounded rounds + protocol + participants
+    if n.kind == "debate":
+        _check_debate(n, nodes, ir, phase1_warn_overrides, err, warn)
+
     # gate node must have a matching gates entry
     if n.kind == "gate":
         if n.id not in ir.gates:
             err("GATE", n.id, "gate node has no gates: entry")
 
 
+def _check_child_templates(
+    n: Node,
+    templates: List[Dict[str, Any]],
+    nodes: Dict[str, Node],
+    ir: WorkflowIR,
+    phase1_warn_overrides: bool,
+    err,
+    warn,
+    *,
+    label: str,
+) -> List[Node]:
+    """Verify a debate/supervisor node's child templates with the FULL node
+    rule set (same reasoning as the fanout/map branch recursion: a child
+    template is a node, so override-only fields, unknown tools, unregistered
+    `run:` and prompt-library errors must not become reachable just because the
+    node is nested).
+
+    Children are also constrained to ir.CHILD_NODE_KINDS (agent). A debate of
+    debates, or a supervisor whose advisor is itself a supervisor, is the one
+    shape that converts a bounded primitive into unbounded recursive spend --
+    rejected here rather than bounded by hope at run time.
+    """
+    built: List[Node] = []
+    for i, tmpl in enumerate(templates):
+        if not isinstance(tmpl, dict):
+            err("STRUCTURE", n.id, f"{label} #{i + 1} must be a mapping, got {type(tmpl).__name__}")
+            continue
+        td = dict(tmpl)
+        # Same default id the driver's `_make_child_node` will pick, so a
+        # compile error names the child the run would actually have created.
+        td.setdefault("id", f"{n.id}_{label}" if len(templates) == 1 else f"{n.id}_{label}_{i + 1}")
+        td.setdefault("kind", "agent")
+        if td["kind"] not in CHILD_NODE_KINDS:
+            err(
+                "STRUCTURE",
+                n.id,
+                f"{label} '{td['id']}' has kind '{td['kind']}': a {n.kind} node's children "
+                f"must be one of {list(CHILD_NODE_KINDS)} (no nested debate/supervisor -- "
+                "that is unbounded recursive spend, not a bounded primitive)",
+            )
+            continue
+        try:
+            child = Node.from_dict(td)
+        except Exception as exc:  # malformed template
+            err("STRUCTURE", n.id, f"invalid {label} template #{i + 1}: {exc}")
+            continue
+        _check_node(child, nodes, ir, phase1_warn_overrides, err, warn)
+        built.append(child)
+    return built
+
+
+def _check_debate(
+    n: Node,
+    nodes: Dict[str, Node],
+    ir: WorkflowIR,
+    phase1_warn_overrides: bool,
+    err,
+    warn,
+) -> None:
+    """Post-Phase-3 §3 debate rules: a directive to argue about, a hard round
+    cap, a named convergence protocol, and >= 2 participants."""
+    directive = n.directive
+    if not isinstance(directive, dict) or not directive:
+        err("DEBATE", n.id, "debate node missing `directive:` mapping (needs at least `topic`)")
+    else:
+        if not isinstance(directive.get("topic"), str) or not directive.get("topic").strip():
+            err("DEBATE", n.id, "debate directive missing a non-empty `topic`")
+        threshold = directive.get("threshold")
+        if threshold is not None and (isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 1):
+            err("DEBATE", n.id, "debate directive `threshold` must be an int >= 1")
+        for f in ("judge_model", "judge_provider", "vote_key", "objective"):
+            val = directive.get(f)
+            if val is not None and not isinstance(val, str):
+                err("DEBATE", n.id, f"debate directive `{f}` must be a string (got {type(val).__name__})")
+        if directive.get("judge_profile"):
+            # F2: no execution path applies a named profile (see
+            # ir.OVERRIDE_ONLY_FIELDS). Accepting judge_profile would promise a
+            # routing guarantee nothing enforces.
+            err(
+                "DEBATE",
+                n.id,
+                "debate directive sets `judge_profile`, which no execution path enforces "
+                "(same F2 rule as spec.profile) -- use `judge_model`/`judge_provider`, which "
+                "the live worker does honor",
+            )
+
+    if n.max_rounds is None:
+        err("DEBATE", n.id, "debate node missing required `max_rounds` (a debate must terminate)")
+    elif isinstance(n.max_rounds, bool) or not isinstance(n.max_rounds, int) or n.max_rounds < 1:
+        err("DEBATE", n.id, f"debate `max_rounds` must be an int >= 1 (got {n.max_rounds!r})")
+
+    if n.protocol is None:
+        err("DEBATE", n.id, f"debate node missing required `protocol` (one of: {', '.join(DEBATE_PROTOCOLS)})")
+    elif n.protocol not in DEBATE_PROTOCOLS:
+        err(
+            "DEBATE",
+            n.id,
+            f"unknown debate protocol '{n.protocol}' (expected one of: {', '.join(DEBATE_PROTOCOLS)})",
+        )
+
+    judge = (n.directive or {}).get("judge")
+    if judge is not None:
+        if not isinstance(judge, dict):
+            err("DEBATE", n.id, "debate directive `judge` must be a node template mapping")
+        else:
+            _check_child_templates(
+                n, [judge], nodes, ir, phase1_warn_overrides, err, warn, label="judge"
+            )
+    elif n.protocol == "judge_escalate":
+        # Fail closed. The alternative -- inventing a judge prompt when the
+        # author supplied none -- would put an unnamed, un-reviewed agent in
+        # charge of the one decision this protocol exists to escalate.
+        err(
+            "DEBATE",
+            n.id,
+            "protocol: judge_escalate requires `directive.judge:` (an agent node template) -- "
+            "the driver will not invent a judge prompt for the decision the protocol escalates",
+        )
+
+    templates = debate_participant_templates(n)
+    if templates is None:
+        err(
+            "DEBATE",
+            n.id,
+            "debate node needs `participants:` -- either an int N (with a `branch:` "
+            "template to clone N times) or a list of participant node templates",
+        )
+        return
+    if len(templates) < 2:
+        err("DEBATE", n.id, f"a debate needs at least 2 participants (got {len(templates)})")
+        return
+    _check_child_templates(
+        n, templates, nodes, ir, phase1_warn_overrides, err, warn, label="participant"
+    )
+
+    if n.reduce:
+        _validate_reduce_block(n, n.reduce, err, warn)
+
+
+def _child_templates_of(n: Node) -> List[Dict[str, Any]]:
+    """Child node templates a debate/supervisor node will actually run.
+
+    F3/F6 have to see these: a debate whose PARTICIPANTS hold `trade_live` is
+    exactly as side-effecting as an agent node that holds it directly, and
+    reading only the parent's own `spec.tools` would let the whole gating rule
+    be sidestepped by nesting.
+    """
+    out: List[Dict[str, Any]] = []
+    if n.kind == "debate":
+        templates = debate_participant_templates(n) or []
+        out.extend(t for t in templates if isinstance(t, dict))
+        judge = (n.directive or {}).get("judge")
+        if isinstance(judge, dict):
+            out.append(judge)
+    return out
+
+
 def _has_live_tool(n: Node) -> bool:
-    if not n.spec or not n.spec.tools:
-        return False
-    return any(t in _LIVE_TOOL_TAGS for t in n.spec.tools)
+    tool_lists: List[List[str]] = []
+    if n.spec and n.spec.tools:
+        tool_lists.append(list(n.spec.tools))
+    for tmpl in _child_templates_of(n):
+        spec = tmpl.get("spec") if isinstance(tmpl.get("spec"), dict) else {}
+        for source in (spec, tmpl):  # `tools:` may sit at node level (YAML shorthand)
+            tools = source.get("tools")
+            if isinstance(tools, list):
+                tool_lists.append([str(t) for t in tools])
+    return any(t in _LIVE_TOOL_TAGS for tools in tool_lists for t in tools)
 
 
 def _validate_reduce_block(n: Node, reduce_dict: Optional[Dict[str, Any]], err, warn) -> None:
@@ -569,7 +748,9 @@ def _check_live_tool_gating(nodes: Dict[str, Node], ir: WorkflowIR, err) -> None
         return False
 
     for n in ir.nodes:
-        if n.kind != "agent":
+        # debate/supervisor included: their children run the live tools, so
+        # the gate requirement follows the node that dispatches them.
+        if n.kind not in ("agent", "debate", "supervisor"):
             continue
         if not _has_live_tool(n):
             continue
@@ -581,7 +762,7 @@ def _check_live_tool_gating(nodes: Dict[str, Node], ir: WorkflowIR, err) -> None
                 err(
                     "LIVE_UNGATED",
                     n.id,
-                    "side-effecting agent node is reachable from an entry without "
+                    f"side-effecting {n.kind} node is reachable from an entry without "
                     "crossing a gate (F3)",
                 )
                 break

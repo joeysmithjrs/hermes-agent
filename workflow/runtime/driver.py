@@ -116,6 +116,21 @@ def _new_node_run_id(run_id: str, node_id: str) -> str:
     return f"{run_id}__{node_id}__{uuid.uuid4().hex[:8]}"
 
 
+def _new_debate_node_run_id(run_id: str, node_id: str, round_no: int, agent_id: str) -> str:
+    """node_run_id for one debate participant's turn in one round
+    (post-Phase-3 §3): ``<run>__debate_<node>__round_<r>__agent_<id>__<uuid>``.
+
+    Deliberately NOT the fanout branch shape (``<node>#<i>``): a reader
+    scanning ``runs/<run_id>/nodes/`` should be able to reconstruct who argued
+    what, in which round, without opening a single file — that audit trail is
+    most of what makes a debate reviewable rather than merely expensive. The
+    uuid4 tail is still there, because F1 ("one node_run_id per EXECUTION")
+    outranks readability: a retried turn must not overwrite the record of the
+    turn it replaces.
+    """
+    return f"{run_id}__debate_{node_id}__round_{round_no}__agent_{agent_id}__{uuid.uuid4().hex[:8]}"
+
+
 def _validate_output_schema(spec_output: Dict[str, Any], output: Any) -> Optional[str]:
     """TASK 6: opt-in output schema validation for an agent/script node's
     result. ``spec_output`` is ``NodeSpec.output`` -- a JSON Schema dict (or
@@ -198,6 +213,12 @@ class NodeRun:
     branch_node: Optional[Node] = None
     branch_item: Any = None
     parent_fanout: Optional[str] = None
+    # Human-readable id used in the event log for a CHILD node-run. Fanout/map
+    # branches leave this None and fall back to `<parent>#<index>`; a debate
+    # participant sets it to `<debate>__round_<r>__<agent>` so the event stream
+    # reads like the debate it recorded. Checkpointed so a resumed run's events
+    # keep the same names as the pre-crash ones.
+    display_id: Optional[str] = None
     # which node-runs this join is waiting on
     waiting_on: Optional[List[str]] = None
     # Phase 2 TASK 7: the LiveWorker's actually-used model/provider (after
@@ -225,6 +246,7 @@ class NodeRun:
             "branch_node": self.branch_node.to_dict() if self.branch_node is not None else None,
             "branch_item": self.branch_item,
             "parent_fanout": self.parent_fanout,
+            "display_id": self.display_id,
             "waiting_on": self.waiting_on,
             "effective_model": self.effective_model,
             "effective_provider": self.effective_provider,
@@ -250,6 +272,7 @@ class NodeRun:
             branch_node=Node.from_dict(d["branch_node"]) if d.get("branch_node") else None,
             branch_item=d.get("branch_item"),
             parent_fanout=d.get("parent_fanout"),
+            display_id=d.get("display_id"),
             waiting_on=d.get("waiting_on"),
             effective_model=d.get("effective_model"),
             effective_provider=d.get("effective_provider"),
@@ -657,8 +680,20 @@ class Driver:
             if not runs:
                 waiting = True
                 continue
+            up_kind = getattr(self.nodes.get(up), "kind", None)
             for nrid in runs:
-                st = self.state.node_runs[nrid].status
+                child = self.state.node_runs[nrid]
+                if up_kind == "debate" and child.branch_index is not None:
+                    # A debate's per-round turns are INTERNAL to its single
+                    # node-run, whose own status already accounts for them: a
+                    # debate deliberately tolerates a failed participant and
+                    # converges on the arguments that survived. Letting one
+                    # failed turn skip a downstream join would override that
+                    # decision from the outside. (Fanout/map branches are NOT
+                    # given this carve-out -- there a failed branch genuinely
+                    # is a missing input to the reduction.)
+                    continue
+                st = child.status
                 if st == "failed":
                     # Phase 3 §A on_fail: `continue` — a failed upstream
                     # with this policy never produces output, but must NOT
@@ -738,9 +773,18 @@ class Driver:
             return "pending"
         # a fanout upstream referenced directly by a plain edge (not `from:`):
         # every spawned branch must also be terminal before the edge counts.
+        upstream_kind = getattr(self.nodes.get(edge.from_), "kind", None)
         for nrid in runs[1:]:
-            if self.state.node_runs[nrid].status != "succeeded":
-                return "pending"
+            child = self.state.node_runs[nrid]
+            if child.status == "succeeded":
+                continue
+            if upstream_kind == "debate" and child.branch_index is not None:
+                # Same carve-out as `_resolve_from_upstreams`: a debate's turns
+                # are internal to its own node-run. A failed turn must not wedge
+                # every downstream node `pending` for the rest of the run when
+                # the debate itself reached a verdict.
+                continue
+            return "pending"
         if edge.condition is None:
             return "satisfied"
         try:
@@ -816,6 +860,8 @@ class Driver:
                 self._run_script(nr, node)
             elif node.kind in ("fanout", "map"):
                 self._run_fanout(nr, node)
+            elif node.kind == "debate":
+                self._run_debate(nr, node)
             elif node.kind == "join":
                 self._run_join(nr, node)
             elif node.kind == "gate":
@@ -831,9 +877,9 @@ class Driver:
     def _finish_top_level(self, nr: NodeRun, node: Node) -> None:
         nr.ended_at = _ts()
         with self._agg_lock:
-            if node.kind not in ("fanout", "map"):
-                # TASK 5: a fanout/map node's own cost/tokens are a ROLLUP
-                # over its branches, computed in `_run_fanout` for display
+            if node.kind not in ("fanout", "map", "debate"):
+                # TASK 5: a fanout/map/debate node's own cost/tokens are a
+                # ROLLUP over its children, computed for display
                 # (so `{{ mynode.output }}`'s envelope reports true subtree
                 # cost) -- NOT an additional contribution to the run-level
                 # total. Each branch already added its own cost/tokens
@@ -1217,7 +1263,7 @@ class Driver:
             skip_nr.started_at = _ts()
             skip_nr.ended_at = skip_nr.started_at
             skip_nr.output = {"skipped_reason": "short_circuit"}
-            disp_id = f"{fanout_node_id}#{skip_nr.branch_index}"
+            disp_id = self._child_display_id(skip_nr)
             kind = skip_nr.branch_node.kind if skip_nr.branch_node else "agent"
             events.start_event(self.run_id, skip_nr.node_run_id, disp_id, kind)
             events.end_event(self.run_id, skip_nr.node_run_id, disp_id, "skipped")
@@ -1248,7 +1294,7 @@ class Driver:
             skip_nr.started_at = _ts()
             skip_nr.ended_at = skip_nr.started_at
             skip_nr.output = {"skipped_reason": "budget_exhausted"}
-            disp_id = f"{fanout_node_id}#{skip_nr.branch_index}"
+            disp_id = self._child_display_id(skip_nr)
             kind = skip_nr.branch_node.kind if skip_nr.branch_node else "agent"
             events.start_event(self.run_id, skip_nr.node_run_id, disp_id, kind)
             events.end_event(self.run_id, skip_nr.node_run_id, disp_id, "skipped")
@@ -1302,12 +1348,20 @@ class Driver:
                 self._finish_branch(one_nr)
             self._checkpoint()
 
+    def _child_display_id(self, nr: NodeRun) -> str:
+        """The name a CHILD node-run (fanout/map branch, debate participant)
+        appears under in the event log. One helper so every mark/finish/skip
+        path agrees -- a node-run whose start event says `d#0` and whose end
+        event says `d__round_1__hawk` is an audit trail nobody can join."""
+        if nr.display_id:
+            return nr.display_id
+        return f"{nr.parent_fanout or nr.node_id}#{nr.branch_index}"
+
     def _mark_branch_running(self, nr: NodeRun) -> None:
-        fanout_node_id = nr.parent_fanout or nr.node_id
         kind = nr.branch_node.kind if nr.branch_node is not None else nr.kind
         nr.status = "running"
         nr.started_at = _ts()
-        events.start_event(self.run_id, nr.node_run_id, f"{fanout_node_id}#{nr.branch_index}", kind)
+        events.start_event(self.run_id, nr.node_run_id, self._child_display_id(nr), kind)
 
     def _run_one_branch(self, nr: NodeRun) -> None:
         """Execute one persisted fanout/map branch leaf without re-running
@@ -1393,7 +1447,6 @@ class Driver:
         aggregate mutation, output store, on_fail dispatch. Called once per
         branch, after `_branch_compute` completes (sequentially, or after
         its pool future resolves)."""
-        fanout_node_id = nr.parent_fanout or nr.node_id
         node = nr.branch_node
         nr.ended_at = _ts()
         with self._agg_lock:
@@ -1407,7 +1460,7 @@ class Driver:
         events.end_event(
             self.run_id,
             nr.node_run_id,
-            f"{fanout_node_id}#{nr.branch_index}",
+            self._child_display_id(nr),
             nr.status,
             effective_model=nr.effective_model,
             effective_provider=nr.effective_provider,
@@ -1430,6 +1483,347 @@ class Driver:
             node.spec = NodeSpec.from_dict(bd.get("spec"))
         return node
 
+    # ---- post-Phase-3 §3: debate ------------------------------------------
+
+    def _make_child_node(self, template: Dict[str, Any], default_id: str) -> Node:
+        """Build a child Node from a debate/supervisor child template.
+
+        Same construction as `_make_branch_node` does for a fanout/map
+        `branch:` template, and deliberately as strict: a child template
+        declares its prompt under `spec:`, not as a bare node-level `prompt:`.
+        (The node-level shorthand is a YAML-loader convenience for TOP-LEVEL
+        nodes; a nested template never passes through that loader. The verifier
+        recurses into these templates with the full node rule set, so an author
+        who writes the shorthand gets a compile-time `agent node missing
+        prompt`, not a silent empty prompt at run time.)
+        """
+        td = dict(template or {})
+        td.setdefault("id", default_id)
+        td.setdefault("kind", "agent")
+        from ..ir import Node as _N, NodeSpec
+
+        child = _N.from_dict(td)
+        if child.spec is None and "spec" in td:
+            child.spec = NodeSpec.from_dict(td.get("spec"))
+        return child
+
+    def _debate_budget_stop(self) -> bool:
+        """Budget circuit-breaker, armed INSIDE the debate loop.
+
+        A debate is ONE node-run that internally runs `participants x rounds`
+        billable agent turns, so -- exactly like the fanout/map branch loop
+        (review BLOCKER #1) -- checking the cap only around the node would let
+        a wide debate overshoot it by an arbitrary multiple. Checked before
+        every turn; a turn already dispatched still finishes.
+        """
+        self._check_budget()
+        return self.state.status == "paused"
+
+    def _run_debate_turn(
+        self,
+        node: Node,
+        child_node: Node,
+        round_no: int,
+        item: Dict[str, Any],
+        *,
+        agent_label: Optional[str] = None,
+    ) -> NodeRun:
+        """Run one participant's (or the judge's) turn as a child node-run.
+
+        Reuses the fanout/map BRANCH machinery verbatim -- `_run_one_branch`
+        gives checkpoint-before-dispatch, per-node_run_id output storage, cost/
+        token folding and `on_fail` dispatch, all of which a debate turn needs
+        for exactly the same reasons a branch does. What differs is only the
+        naming (see `_new_debate_node_run_id`) and the `branch` item the turn
+        argues from.
+        """
+        agent_id = agent_label or child_node.id
+        nrid = _new_debate_node_run_id(self.run_id, node.id, round_no, agent_id)
+        existing = self.state.node_runs_by_node.get(node.id, [])
+        index = sum(1 for x in existing if self.state.node_runs[x].branch_index is not None)
+        child_nr = NodeRun(
+            node_run_id=nrid,
+            node_id=node.id,
+            kind=child_node.kind,
+            status="pending",
+            branch_index=index,
+            branch_node=child_node,
+            branch_item=item,
+            parent_fanout=node.id,
+            display_id=f"{node.id}__round_{round_no}__{agent_id}",
+        )
+        self.state.node_runs[nrid] = child_nr
+        self.state.node_runs_by_node.setdefault(node.id, []).append(nrid)
+        self._run_one_branch(child_nr)
+        # `on_fail: retry` resets a failed node-run back to `pending`. Re-run it
+        # HERE, inside the round it belongs to, instead of leaving a stray
+        # pending child for the ready-set walk to pick up after the debate has
+        # already concluded. `_maybe_retry` bounds this by `attempts`, so the
+        # loop terminates.
+        while child_nr.status == "pending":
+            self._run_one_branch(child_nr)
+        return child_nr
+
+    @staticmethod
+    def _debate_converged(tally: Dict[str, Any], threshold: Any, votes_cast: int) -> bool:
+        """Did this round produce a clean enough majority to stop early?
+
+        A tie never converges (that is the whole point of `majority`'s explicit
+        `tie` flag). Otherwise the winner must reach `directive.threshold`
+        votes, defaulting to a strict majority of the votes actually CAST this
+        round -- not of the participant count, because a participant whose turn
+        failed cast no vote and must not raise the bar for the ones that did.
+        """
+        if not tally or tally.get("tie"):
+            return False
+        count = int(tally.get("count") or 0)
+        if isinstance(threshold, int) and not isinstance(threshold, bool) and threshold >= 1:
+            needed = threshold
+        else:
+            needed = votes_cast // 2 + 1
+        return count >= needed
+
+    def _run_debate(self, nr: NodeRun, node: Node) -> None:
+        """Run a bounded, auditable debate (post-Phase-3 §3).
+
+        Structure: ONE node-run (like `map`), inside which each round runs every
+        participant through the ordinary worker as a child node-run. Rounds are
+        hard-capped by `max_rounds`, so a debate always terminates -- the graph
+        stays acyclic and the spend stays bounded by
+        `participants x max_rounds`, both visible in the YAML.
+
+        Within a round, every participant argues from the SAME transcript (the
+        previous rounds' arguments). Feeding each participant its same-round
+        predecessors would make the outcome depend on participant declaration
+        order and quietly privilege whoever spoke last; a fixed per-round
+        transcript keeps a round order-independent and reproducible.
+
+        Convergence per `protocol`:
+          vote            stop as soon as a round produces a clean majority
+                          (`majority` reducer, `directive.threshold` or a strict
+                          majority of votes cast). Still diverged after
+                          `max_rounds` -> the node FAILS (`DEBATE_DIVERGED`): a
+                          vote protocol exists to produce a decision, and
+                          reporting "succeeded" with no decision would hand
+                          downstream nodes a verdict nobody reached. Authors who
+                          want the exploratory reading use `protocol: continue`
+                          (or `on_fail: continue`).
+          judge_escalate  same rounds; if the last round is still diverged, the
+                          `directive.judge` agent reads the full transcript and
+                          rules (`judge_converge` folds ruling + tally together).
+                          The judge is an ordinary child node-run -- same worker,
+                          same audit trail, same cost accounting.
+          continue        no convergence requirement; every round runs and the
+                          arguments are concatenated.
+
+        `reduce:` (optional) replaces the protocol's default reducer over the
+        same envelope set the protocol would have reduced.
+        """
+        from ..ir import debate_participant_templates
+
+        directive = node.directive or {}
+        protocol = node.protocol or "continue"
+        max_rounds = int(node.max_rounds or 1)
+        vote_key = directive.get("vote_key")
+        threshold = directive.get("threshold")
+
+        participants = [
+            self._make_child_node(t, f"{node.id}_participant_{i + 1}")
+            for i, t in enumerate(debate_participant_templates(node) or [])
+        ]
+
+        transcript: List[Dict[str, Any]] = []
+        round_records: List[Dict[str, Any]] = []
+        all_envelopes: List[Dict[str, Any]] = []
+        final_envelopes: List[Dict[str, Any]] = []
+        converged_tally: Optional[Dict[str, Any]] = None
+        stopped_reason = "max_rounds"
+        rounds_run = 0
+
+        for round_no in range(1, max_rounds + 1):
+            if self._aborted:
+                stopped_reason = "aborted"
+                break
+            if self._debate_budget_stop():
+                stopped_reason = "budget_exhausted"
+                break
+            rounds_run = round_no
+            round_envelopes: List[Dict[str, Any]] = []
+            round_entries: List[Dict[str, Any]] = []
+            interrupted = False
+            for participant in participants:
+                if self._aborted:
+                    stopped_reason = "aborted"
+                    interrupted = True
+                    break
+                if self._debate_budget_stop():
+                    stopped_reason = "budget_exhausted"
+                    interrupted = True
+                    break
+                turn = self._run_debate_turn(
+                    node,
+                    participant,
+                    round_no,
+                    {
+                        "role": "participant",
+                        "round": round_no,
+                        "max_rounds": max_rounds,
+                        "participant": participant.id,
+                        "topic": directive.get("topic"),
+                        "objective": directive.get("objective"),
+                        "transcript": list(transcript),
+                    },
+                )
+                if turn.status == "succeeded":
+                    round_envelopes.append(
+                        {"node_run_id": turn.node_run_id, "output": turn.output}
+                    )
+                    round_entries.append(
+                        {
+                            "round": round_no,
+                            "participant": participant.id,
+                            "node_run_id": turn.node_run_id,
+                            "output": turn.output,
+                        }
+                    )
+
+            transcript.extend(round_entries)
+            all_envelopes.extend(round_envelopes)
+            tally = script_registry.majority(round_envelopes, key=vote_key)
+            round_records.append(
+                {
+                    "round": round_no,
+                    "arguments": len(round_envelopes),
+                    "participants": len(participants),
+                    "tally": tally,
+                }
+            )
+            if round_envelopes:
+                final_envelopes = round_envelopes
+            if interrupted:
+                break
+            if protocol in ("vote", "judge_escalate") and round_envelopes:
+                if self._debate_converged(tally, threshold, len(round_envelopes)):
+                    converged_tally = tally
+                    stopped_reason = "converged"
+                    break
+
+        # ---- escalate to the judge, if this protocol asks and the room did
+        #      not settle it by itself.
+        judgment: Any = None
+        judge_node_run_id: Optional[str] = None
+        judge_tmpl = directive.get("judge")
+        if (
+            protocol == "judge_escalate"
+            and converged_tally is None
+            and final_envelopes
+            and stopped_reason == "max_rounds"
+            and isinstance(judge_tmpl, dict)
+        ):
+            judge_node = self._make_child_node(judge_tmpl, f"{node.id}_judge")
+            self._apply_judge_overrides(judge_node, directive)
+            judge_turn = self._run_debate_turn(
+                node,
+                judge_node,
+                rounds_run,
+                {
+                    "role": "judge",
+                    "round": rounds_run,
+                    "max_rounds": max_rounds,
+                    "topic": directive.get("topic"),
+                    "objective": directive.get("objective"),
+                    "transcript": list(transcript),
+                    "candidates": [e.get("output") for e in final_envelopes],
+                },
+                agent_label="judge",
+            )
+            if judge_turn.status == "succeeded":
+                judgment = judge_turn.output
+                judge_node_run_id = judge_turn.node_run_id
+
+        # ---- reduce ---------------------------------------------------------
+        envelopes = all_envelopes if protocol == "continue" else final_envelopes
+        if node.reduce:
+            result = self._select_reducer(node)(envelopes)
+        elif protocol == "vote":
+            result = script_registry.majority(envelopes, key=vote_key)
+        elif protocol == "judge_escalate":
+            result = script_registry.judge_converge(envelopes, judgment=judgment, key=vote_key)
+        else:
+            result = script_registry.concat(envelopes)
+
+        nr.output = {
+            "kind": "debate",
+            "protocol": protocol,
+            "topic": directive.get("topic"),
+            "participants": [p.id for p in participants],
+            "rounds_run": rounds_run,
+            "max_rounds": max_rounds,
+            "converged": converged_tally is not None,
+            "stopped_reason": stopped_reason,
+            "judge_node_run_id": judge_node_run_id,
+            "result": result,
+            "rounds": round_records,
+            "transcript": transcript,
+        }
+        # This node's own cost/tokens are the SUM over its turns -- a subtree
+        # rollup for display only, NOT a second contribution to the run total
+        # (each turn already folded its own cost in exactly once via
+        # `_finish_branch`; see `_finish_top_level`'s debate guard).
+        cost_sum, in_sum, out_sum = self._rollup_branch_cost(node.id)
+        nr.cost_usd = cost_sum
+        nr.tokens_in = in_sum
+        nr.tokens_out = out_sum
+
+        if not all_envelopes:
+            nr.status = "failed"
+            nr.error = {
+                "code": "DEBATE",
+                "message": (
+                    f"debate '{node.id}' produced no arguments in {rounds_run} round(s) "
+                    f"({stopped_reason}) -- every participant turn failed or was never run"
+                ),
+                "retriable": True,
+            }
+            return
+        if protocol == "vote" and converged_tally is None and stopped_reason == "max_rounds":
+            nr.status = "failed"
+            nr.error = {
+                "code": "DEBATE_DIVERGED",
+                "message": (
+                    f"debate '{node.id}' reached max_rounds ({max_rounds}) without a majority "
+                    "under protocol: vote. Use protocol: judge_escalate to have a judge decide, "
+                    "protocol: continue if divergence is an acceptable outcome, or raise "
+                    "max_rounds."
+                ),
+                "retriable": False,
+            }
+            return
+        nr.status = "succeeded"
+
+    @staticmethod
+    def _apply_judge_overrides(judge_node: Node, directive: Dict[str, Any]) -> None:
+        """Apply `directive.judge_model`/`judge_provider` to the judge child,
+        without ever overriding what the judge template itself declares.
+
+        These two are honored precisely because the live worker honors
+        `spec.model`/`spec.provider` (Phase 2) -- which is also why the verifier
+        rejects `judge_profile`: a profile name no execution path applies would
+        be a routing promise nothing keeps.
+        """
+        from ..ir import NodeSpec
+
+        model = directive.get("judge_model")
+        provider = directive.get("judge_provider")
+        if not model and not provider:
+            return
+        if judge_node.spec is None:
+            judge_node.spec = NodeSpec()
+        if model and not judge_node.spec.model:
+            judge_node.spec.model = model
+        if provider and not judge_node.spec.provider:
+            judge_node.spec.provider = provider
+
     def _run_join(self, nr: NodeRun, node: Node) -> None:
         """Reduce upstream branch outputs via the shared reducer-dispatch
         (`_select_reducer` -- TASK 1/2), the same dispatch a `map` node
@@ -1447,6 +1841,13 @@ class Driver:
             else:
                 for nrid in self.state.node_runs_by_node.get(up, []):
                     upnr = self.state.node_runs[nrid]
+                    if upnr.branch_index is not None:
+                        # A CHILD node-run (a debate turn) is not the upstream
+                        # node's result -- the node's own envelope is, and it
+                        # already reduced its children. Including both would
+                        # feed the reducer the same content twice, once raw and
+                        # once folded.
+                        continue
                     # Review HIGH #4: same rule as `_branch_envelopes` --
                     # only `succeeded` upstreams are reduced. This matters
                     # for an `on_fail: continue` upstream, which reaches a
