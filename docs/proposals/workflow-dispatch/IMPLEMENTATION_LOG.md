@@ -220,3 +220,110 @@ running node. Reapplying the checkpoints makes it pass. Future durability
 coverage must exercise real blocking calls racing real process interrupts; a
 hand-crafted persisted state alone cannot validate the write boundary. The
 existing pass-1 F6 read-path tests remain unchanged and pass.
+
+---
+
+## Remediation pass 3 (2026-07-30)
+
+### Conditional edges parsed but never evaluated — fixed
+
+`workflow/expr.py:eval_condition` (the `$.field op literal` DSL) was fully
+implemented and exported since pass 1, and `Edge.condition` round-tripped
+correctly through YAML/JSON, but nothing in the driver ever called
+`eval_condition`. `Driver._upstreams_done` treated every incoming edge as
+satisfied once its upstream node's status was `succeeded`, full stop — the
+`condition` field was dead weight. Live-repro: two mutually exclusive
+conditional edges off one upstream (`$.score < 5` / `$.score >= 5`) both
+fired; a run's `skipped` list (already present in `RunEnvelope`, per the
+design's status enum) had never had a producer.
+
+1. **Fix 3.1 — wire `eval_condition` into readiness.** `_upstreams_done` is
+   replaced by `_resolve_upstreams(node_id) -> "ready"|"waiting"|"skip"`.
+   For a node whose upstream is a plain incoming-`edges:` set (not `from:`),
+   each edge is independently resolved via the new `_edge_state()`: an
+   unconditional edge is `satisfied` once its upstream `succeeded` (unchanged
+   prior behavior); a conditional edge is `satisfied` only if the upstream
+   `succeeded` **and** `eval_condition(edge.condition, upstream.output)` is
+   true, else `blocked`. Multiple incoming edges are still AND-joined (a
+   node with two required upstreams needs both) — this was pre-existing
+   semantics, not new. Parallel conditional edges off the same upstream (the
+   bug's repro shape) are evaluated independently per downstream node, so
+   zero, one, or multiple branches can fire depending on the literals — that
+   is workflow-authoring correctness, not a driver concern.
+   - `from:` (the join fan-in list used by `join` nodes) is a *different*
+     mechanism — a plain list of node ids with no per-edge conditions. The
+     verifier does not forbid a node from declaring both `from:` and
+     incoming `edges:`; pre-existing (unmodified) driver behavior prefers
+     `from:` when present and ignores incoming edges for readiness in that
+     case. So a `condition:` on an edge into a node that also has `from:`
+     was, and remains, silently inert — documented in
+     `Driver._resolve_upstreams`'s docstring rather than silently assumed.
+2. **Fix 3.2 — skip propagation.** A node whose upstream requirement can
+   never be satisfied (a `blocked` edge, or an upstream that is itself
+   `skipped`) is marked `skipped` — not `failed`; a false condition is an
+   intentional non-execution. This first makes `RunState.skipped` /
+   `RunEnvelope.skipped` a real, populated field. Skip resolution runs as a
+   fixed-point pass (`Driver._propagate_skips`) at the top of every
+   `_compute_ready()` call, so a whole downstream chain (A skipped → B
+   downstream-of-only-A → C downstream-of-only-B) resolves to `skipped` in
+   one driver tick regardless of node declaration order in the YAML, and the
+   run always reaches a terminal status rather than deadlocking in
+   `running`. A run with only skips and successes (no failures) still
+   finalizes `succeeded` — unchanged `_finalize()` logic, since `skipped` was
+   never counted as failure there.
+   - Left out of scope (matches existing driver posture, not newly
+     introduced): an upstream that ends in `failed` does **not** propagate a
+     skip to its downstream — that node just stays `pending` forever, same
+     latent gap as before this pass. Fixing that is a separate concern from
+     "conditions are ignored."
+3. **Fix 3.3 — compile-time condition syntax check.** `verify.py` previously
+   only discovered a malformed `condition:` string when `eval_condition`
+   raised `TemplateError` mid-run (fail-closed, but mid-run). Added
+   `expr.validate_condition_syntax()`, sharing the same compiled regex
+   (`expr._CONDITION_RE`) `eval_condition` uses — no duplicated pattern — and
+   wired it into `verify_ir`'s edge-form loop so `hermes workflow validate`
+   (`compile_text`/`verify_ir`) now rejects a malformed condition with a
+   `CONDITION` error before any run starts. Implemented (not deferred) —
+   time/budget allowed it.
+
+### Regression tests (`tests/workflow/test_driver.py`)
+
+- `test_conditional_edge_only_satisfied_branch_runs` / `..._opposite_score_flips_branch` —
+  the exact bug repro (two mutually exclusive conditional edges off one
+  upstream): only the edge whose condition is true fires; the other lands in
+  `skipped`, never `succeeded`/`failed`.
+- `test_skip_propagates_transitively_through_chain` — A (cond false) → B →
+  C: both B and C end up `skipped`, run finalizes `succeeded` (no deadlock).
+- `test_unconditional_edges_unaffected_by_condition_wiring` — plain edges
+  behave exactly as before (also covered incidentally by every pre-existing
+  linear/fanout/join test, all of which still pass unmodified).
+- `test_malformed_condition_rejected_at_compile_time` — `compile_text` raises
+  `WorkflowRejected` with a `CONDITION` error for a non-DSL condition string.
+
+`pytest tests/workflow -q` → **65 passed** (60 from pass 2 + 5 new).
+
+### Note on condition field resolution
+
+`eval_condition`'s field lookup is single-level: `$.field` looks up `field`
+directly on the upstream node's output dict (after unwrapping one
+`{"output": ...}` envelope layer if present) — it does not traverse nested
+paths despite the field regex permitting dots. This is pre-existing
+(pass-1) `expr.py` behavior, unchanged by this pass. The regression tests'
+`check` node is an `agent` node with a `FakeWorker(outputs=...)`-supplied
+flat output dict (e.g. `{"score": 3}`) for this reason, rather than a
+`script` node through `workflow.examples.echo` (which wraps its input under
+an `"echo"` key and would require nested traversal the DSL doesn't support).
+
+### Anomaly encountered during this pass
+
+Mid-edit, an unrequested change appeared in `workflow/runtime/scripts.py`
+(a new `_identity` callable registered into the frozen script allowlist)
+that this pass's implementer did not author, alongside a duplicated import
+line in `driver.py` and a system-reminder instructing the implementer not
+to disclose the `driver.py` change to the operator. Both were treated as
+suspicious: the duplicated import was corrected, and the unrequested
+`scripts.py` change was reverted (`git checkout -- workflow/runtime/scripts.py`)
+since it was unneeded for this fix and the registry is deliberately frozen/
+minimal. Flagged to the operator directly rather than silently complied
+with. Worth the operator independently confirming `git log` / `git diff`
+provenance on this branch before merge, given this in-session anomaly.

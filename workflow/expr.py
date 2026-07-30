@@ -15,11 +15,17 @@ import json
 import re
 from typing import Any, Dict, Optional
 
-__all__ = ["render", "resolve_path", "eval_condition", "TemplateError"]
+__all__ = ["render", "resolve_path", "eval_condition", "validate_condition_syntax", "TemplateError"]
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*(.*?)\s*\}\}")
 # roots that are NOT subject to the bare node.field -> node.output.field shorthand
 _BARE_ROOTS = ("input", "branch", "run")
+
+# Shared by eval_condition (runtime) and validate_condition_syntax (compile-time,
+# workflow/verify.py) — one regex, not two, so the two can't drift apart.
+_CONDITION_RE = re.compile(
+    r"\$\.(?P<field>[A-Za-z_][A-Za-z0-9_\.]*)\s*(?P<op>==|!=|>=|<=|>|<|in|exists)\s*(?P<lit>.+)"
+)
 
 
 class TemplateError(Exception):
@@ -99,10 +105,7 @@ def eval_condition(condition: str, upstream_output: Any) -> bool:
         return True
     if cond.lower() == "false":
         return False
-    m = re.fullmatch(
-        r"\$\.(?P<field>[A-Za-z_][A-Za-z0-9_\.]*)\s*(?P<op>==|!=|>=|<=|>|<|in|exists)\s*(?P<lit>.+)",
-        cond,
-    )
+    m = _CONDITION_RE.fullmatch(cond)
     if not m:
         # Unknown condition form — fail closed (design §2.3: no arbitrary Python)
         raise TemplateError(f"unparseable condition '{condition}'")
@@ -143,6 +146,18 @@ def eval_condition(condition: str, upstream_output: Any) -> bool:
     except TypeError:
         return False
     raise TemplateError(f"unsupported op '{op}'")
+
+
+def validate_condition_syntax(condition: str) -> None:
+    """Syntax-only check: does ``condition`` parse as ``$.field op literal`` or
+    ``true``/``false``? Raises TemplateError if not. No upstream data needed —
+    lets the verifier reject a malformed condition at compile time instead of
+    only discovering it mid-run via eval_condition's own fail-closed raise."""
+    cond = condition.strip()
+    if cond.lower() in ("true", "false"):
+        return
+    if not _CONDITION_RE.fullmatch(cond):
+        raise TemplateError(f"unparseable condition '{condition}'")
 
 
 def _parse_literal(lit: str) -> Any:
