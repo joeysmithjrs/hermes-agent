@@ -169,6 +169,13 @@ def status(run_id: str) -> Dict[str, Any]:
                 "started_at": row["started"],
                 "ended_at": row["ended"],
                 "cost_usd": row["cost_usd"],
+                # sqlite does not index tokens or pause_reason (F11 index is a
+                # cost-only cache); a sqlite-only fallback (no run.json on disk)
+                # genuinely doesn't know these, so surface that as None rather
+                # than a misleading 0.
+                "tokens_in": None,
+                "tokens_out": None,
+                "pause_reason": None,
             }
         raise FileNotFoundError(f"no run {run_id}")
     # build envelope from state
@@ -186,6 +193,16 @@ def status(run_id: str) -> Dict[str, Any]:
         "started_at": state.started_at,
         "ended_at": state.ended_at,
         "cost_usd": state.cost_usd,
+        # Phase 3 TASK 2: rolled-up token counters. Read defensively — the
+        # driver's cost/token rollup (RunState.tokens_in/tokens_out) may not
+        # have landed in every checkpoint yet (concurrent Phase 3 work), and
+        # old pre-Phase-3 checkpoints never had these fields at all. `rec` is
+        # the raw on-disk dict, so this works whether or not RunState itself
+        # has grown the attributes: unavailable -> None, never a fake 0.
+        "tokens_in": rec.get("tokens_in", getattr(state, "tokens_in", None)),
+        "tokens_out": rec.get("tokens_out", getattr(state, "tokens_out", None)),
+        # Phase 2 TASK 5 field; already on RunState, just wasn't surfaced here.
+        "pause_reason": getattr(state, "pause_reason", None),
     }
 
 

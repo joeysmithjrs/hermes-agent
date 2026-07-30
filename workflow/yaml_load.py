@@ -93,6 +93,7 @@ def _node_from_yaml(d: Dict[str, Any]) -> Node:
         attempts=d.get("attempts"),
         idempotent=d.get("idempotent"),
         side_effects=d.get("side_effects"),
+        on_fail=d.get("on_fail"),
     )
 
 

@@ -166,6 +166,15 @@ triggers:
 
 
 def test_branch_override_fields_warn_behind_flag():
+    """F2 warn path must apply to fanout.branch.spec too, not only top-level
+    nodes (mirrors test_branch_override_fields_rejected_strict's reject path).
+
+    Phase 3 note: this used to use `tools:` as the still-rejected field.
+    tools is now genuinely honored (LiveWorker resolves spec.tools to
+    toolsets; see ir.PHASE3_OVERRIDE_FIELDS) and dropped out of
+    OVERRIDE_ONLY_FIELDS, so it no longer demonstrates the F2 warn/reject
+    machinery. `profile` still does.
+    """
     yaml = """
 workflow: branch_override_warn
 version: 1
@@ -180,7 +189,7 @@ nodes:
     max_branches: 5
     branch:
       kind: agent
-      spec: {prompt: "do {{ branch }}", tools: [web_search]}
+      spec: {prompt: "do {{ branch }}", profile: trader}
   - id: jn
     kind: join
     from: [fan]
@@ -198,6 +207,42 @@ triggers:
     # And strict still rejects:
     with pytest.raises(WorkflowRejected):
         verify_ir(ir, phase1_warn_overrides=False)
+
+
+def test_branch_tools_valid_names_compile_clean():
+    """Phase 3 positive counterpart: a fanout.branch.spec with a recognized
+    spec.tools list compiles clean in strict mode -- no PHASE1_OVERRIDE (tools
+    is honored now, ir.PHASE3_OVERRIDE_FIELDS) and no TOOLS_UNKNOWN (the name
+    is real). Proves the branch-template recursive re-check (BLOCK #2) applies
+    the *same* Phase 3 carve-out as a top-level node."""
+    yaml = """
+workflow: branch_tools_valid
+version: 1
+nodes:
+  - id: seed
+    kind: script
+    run: workflow.examples.echo
+    input: {items: [a, b]}
+  - id: fan
+    kind: fanout
+    over: "{{ seed.output.echo.items }}"
+    max_branches: 5
+    branch:
+      kind: agent
+      spec: {prompt: "do {{ branch }}", tools: [web_search], max_turns: 4}
+  - id: jn
+    kind: join
+    from: [fan]
+    reduce: { type: concat }
+edges:
+  - { from: seed, to: fan }
+  - { from: fan, to: jn }
+triggers:
+  - { kind: manual }
+"""
+    ir = _load(yaml)
+    vir = verify_ir(ir, phase1_warn_overrides=False)  # strict: zero issues
+    assert vir.issues == [], vir.issues
 
 
 def test_branch_unregistered_run_rejected():

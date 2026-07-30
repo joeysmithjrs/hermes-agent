@@ -476,3 +476,229 @@ the test suite does.
 `pytest tests/workflow tests/tools/test_workflow_tools.py -q` → **149 passed**
 (67 pre-existing Phase 1 + 82 new). Hermetic: no network, no live LLM, no real
 config. `ruff --select PLW1514` clean on all touched files (Windows footgun).
+
+---
+
+# Phase 3 Implementation Log
+
+**Orchestrator:** Claude Code (Opus) — architecture, IR contract, integration, review triage
+**Implementers:** four parallel Sonnet subagents on disjoint file ownership
+**Branch:** `feat/workflow-dispatch-phase3`
+**Base:** `bb72f747a` (post Phase 2 merge)
+**Date:** 2026-07-30
+
+Phase 3 is the productization pass: the graph vocabulary operators actually
+asked for (`map`, richer reducers, failure policies), the runtime promise Phase
+1 deferred twice (`max_parallel_nodes`), honest money (cost + tokens), and the
+surfaces that make a run observable and sequenceable.
+
+## What shipped
+
+**Graph & control flow**
+- `map` sugar — fanout + implicit reduce in one node. A `map` node's own output
+  IS the reduced branch result, so `{{ mapnode.output }}` downstream reads
+  reduced data with no `join` node in the graph. `fanout`'s own output shape is
+  deliberately unchanged (`{branches, count}`) so every Phase 1/2 workflow keeps
+  working.
+- Reducers `first_k`, `majority`, `best` alongside `concat`/`top_k`.
+  `majority`'s tie-break is specified, not incidental: equal counts resolve to
+  the first-appearing value and the result carries `tie: true`.
+- `first_k` + `short_circuit` — branches dispatch in waves so not-yet-started
+  branches are skipped once k succeed. **Cooperative only**: an in-flight branch
+  finishes. Documented that way rather than implying we kill work.
+- `on_fail`: `fail_run` | `skip_downstream` (default = Phase 1/2 behavior) |
+  `continue` | `retry`. `continue` is implemented structurally inside the
+  existing `_edge_state`/`_resolve_from_upstreams` cascade rather than as a
+  parallel code path. `fail_run` sets an abort flag that both `_finalize` and
+  `_check_budget` honor, so a declared hard stop cannot be softened back into
+  `partial`/`paused`.
+
+**Runtime**
+- `max_parallel_nodes` is real (thread pool). `<=1` takes the original
+  sequential path byte for byte. The invariant most at risk was
+  checkpoint-before-dispatch, so a batch marks every node-run `running`, fires
+  its start event, and checkpoints **before any future is submitted**. Only
+  `agent`/`script` and branch node-runs are pool-eligible; `fanout`/`map`/
+  `join`/`gate` stay on the main thread in a phase after all futures are
+  awaited, so a materializing fanout cannot race a pool worker reading
+  `node_runs_by_node`. Results fold into `RunState` in ready-set order, never
+  completion order.
+- Cost + tokens roll up per node and per run; a fanout/map envelope reports its
+  branch subtree sum for display while the run total counts each branch once.
+
+**Correctness under LLMs**
+- Output JSON Schema enforcement on agent/script nodes (code `SCHEMA`), using
+  `jsonschema` when importable and degrading to a structural check when not —
+  absence of an optional package weakens the check, it never disables the
+  feature or raises.
+- `spec.tools` subset and `spec.max_turns`, the two fields Phase 2 rejected
+  rather than pretend to enforce.
+
+**Surfaces** — see `PHASE3_SURFACES.md` for the operator-facing detail:
+`workflow watch`, `status --watch` (previously an advertised no-op), `list
+--cost`, `chain` / `run --from-run`, `schedule`, notify presets/templates,
+and the `workflow_chain` conversation tool.
+
+## The Phase 2 cost under-report — root cause
+
+Phase 2 recorded `$0.00` for essentially every live run. It was assumed to be a
+parsing gap; it is not. `tools/delegate_tool.py` builds the child entry with
+`tokens: {input, output}` and stashes the dollar figure under
+`_child_cost_usd`, which `_finalize_child_results` **pops** off the entry and
+folds into the *parent's* session total. By the time `run_child_agent` returns,
+the per-child cost is genuinely absent from the value a caller can see — no
+amount of harder parsing recovers it.
+
+Two possible fixes: edit `delegate_tool` to leave the field on the entry (a
+shared file on the delegation hot path), or read the counters off the child
+agent object, which `LiveWorker` built and still holds. We took the second: it
+costs zero edits outside `workflow/`, and it is **per-child rather than a
+before/after delta on the parent's running total** — which is what keeps it
+correct under `max_parallel_nodes > 1`, where several children fold into the
+same parent concurrently and a delta would mis-attribute cost between nodes.
+
+`extract_cost_and_tokens()` still parses the result first, so an explicit
+cost/token in the envelope always wins; the child-object read is a fallback.
+
+## Not shipped (deliberate, and the code says so)
+
+`spec.profile` and `spec.workspace` remain the only override-only fields — no
+execution path applies a named profile or enforces a workspace boundary, so the
+verifier still rejects them. `spec.deny_tools` compiles to a
+`DENY_TOOLS_UNENFORCED` warning: it restricts nothing, and a silently-ignored
+deny list is worse than no deny list.
+
+**`spec.tools` is not per-tool gating, and the docstring says so.**
+`build_child_agent` takes toolset names, so what we actually guarantee is (a)
+child toolsets ⊆ parent toolsets, enforced by `tools.delegate_tool`'s own
+intersection, and (b) every requested tool is present. Sibling tools in the
+same toolset may come along. It is a scoping convenience; the gate (F3) remains
+the security boundary for side-effecting tools.
+
+**Kanban projection is a documented stub, not a live integration.** Hermes
+kanban tasks are *dispatchable work items*, not passive cards: `kanban_create`
+requires an `assignee` and defaults to `initial_status="running"`, so creating a
+card to mirror a run would immediately queue a real dispatcher-spawned agent —
+precisely the "kanban as execution bus" outcome the design forbids, plus real
+spend on every node transition. Pinning `initial_status="blocked"` dodges the
+spawn but forecloses `kanban_complete`/`kanban_block`, both of which validate
+that the task has a live dispatcher run beneath it. A faithful one-card-per-run
+mirror needs a passive card kind in `hermes_cli/kanban_db.py` — sacred core, out
+of scope. `project_run()` returns
+`{"projected": False, "reason": "kanban_tasks_are_dispatchable_work_items"}`
+rather than faking success, and ships with a `set_projector()` injection seam so
+the interface is unit-testable today.
+
+Still deferred from earlier phases: native `triggers:` dispatch (cron/webhook
+remain host-surface recipes, not a second scheduler), gate decisions as a
+conversation tool, and `modify` gate decisions.
+
+## Orchestration notes
+
+Four implementation agents ran concurrently on **disjoint file ownership**
+(driver+scripts / verify+live / cli+chain+init / notify+kanban+config), with the
+IR contract landed centrally first so nobody negotiated it mid-flight. Agents
+were told to report — not make — changes outside their files; three did, and
+those landed as integration edits. That is the shape that made parallelism safe:
+the merge conflicts that would have dominated were designed out rather than
+resolved.
+
+**Safety:** this box's `~/.hermes/config.yaml` has `workflow.enabled: true` with
+live credentials, and the Phase 2 log records a review agent accidentally
+spending real money there. Every agent was given a hard requirement to run under
+`HERMES_HOME=$(mktemp -d) HERMES_WORKFLOW_FAKE=1` and to verify `LiveWorker`
+only through injected stub builders. No live run occurred in this phase.
+
+## Adversarial review pass (Phase 3) — findings fixed in this branch
+
+A review subagent attacked the diff with hermetic repros. Seven demonstrated
+defects, all fixed here; a separate test pass independently found two more.
+
+**BLOCKER 1 — the budget circuit-breaker was not armed inside branch
+execution.** `_check_budget()` ran in the top-level loop only. A fanout/map is
+ONE node-run that internally runs N branches, so every branch spent before the
+cap was re-examined: 5 branches at $5 against a $6 cap produced `cost 25.0`
+with all 5 workers invoked. Separately, the pooled top-level path submitted the
+*entire* ready set before its first check, so overshoot scaled with graph width
+rather than with `max_parallel_nodes`. Fixed by dispatching in ordered waves —
+branches between waves, and the top-level batch regrouped into
+`max_parallel_nodes`-sized waves — with a budget check between each. Overshoot
+is now bounded by one wave and documented as such in `PHASE3_SURFACES.md`;
+un-started branches record `skipped_reason: budget_exhausted`, distinct from
+`short_circuit` (ran out of money vs. had enough answers).
+
+**BLOCKER 2 — `spec.tools` failed OPEN.** `_resolve_child_toolsets` returned
+`None` when nothing resolved, and `None` means *inherit every parent toolset*
+to `build_child_agent`. So a node asking to be narrowed got the widest possible
+grant, precisely when something was already wrong. This was not hypothetical:
+the verifier's own F3 live-tool tags (`trade_live`, `exec`, `send_email`, …)
+compile fine but resolve to no runtime toolset, so a gated side-effecting node
+scoped `tools: [send_email]` — the highest-risk node in the system — silently
+received everything. Now fails closed: unresolvable names are kept, intersect
+to the empty set in `delegate_tool`, and grant nothing.
+
+**HIGH 3 — `schedule --register --name` path traversal.** `--name` was joined
+straight into `$HERMES_HOME/scripts/<name>.sh`; `--name ../../x` wrote an
+executable wrapper script outside `$HERMES_HOME`. `hermes cron create` rejected
+the traversal afterwards, so no job registered — but the file was already on
+disk. Now validated before use, plus a resolved-path containment assert at the
+write site.
+
+**HIGH 4 — reducers counted non-results as results.** `_branch_envelopes`
+collected every branch regardless of status, so a failed branch's `output:
+None` was reduced as data: `first_k` returned that `null` as one of its "first
+k" picks while real successes sat further down, and `majority` counted `None`
+as a vote that could win. Now only `succeeded` branches are reduced, in both
+the map and join paths. `majority.total` still reflects votes actually cast, so
+a 2-of-2 consensus stays distinguishable from 2-of-10.
+
+**HIGH 5 — a fanout node id appeared in BOTH `succeeded` and `failed`.**
+Branches share their parent's `node_id`, and the parent is marked succeeded
+when it materializes. Two lists a caller is entitled to read as disjoint were
+not. Branch failures are now recorded branch-qualified (`fan#2`) — disjoint and
+strictly more informative. The lists are a summary; readiness never consults
+them (it walks node-run statuses), so control flow is unaffected.
+
+**MEDIUM 6 — the F6 compile-time claim was overstated.** The verifier checked
+`on_fail` and `side_effects` on a single node, so a map parent with
+`on_fail: retry` over a branch template with `side_effects: external` compiled
+clean, contradicting the documented "rejected at compile time". The driver's
+runtime guard still refused the retry, so F6 itself was never violated — but
+the doc was wrong. Verifier extended to the parent/branch combination.
+
+**MEDIUM 7 — F3 rejected the safest possible graph.** `path_without_gate`
+tested `p == start` before `p in gates`, so a gate that IS the entry node
+(`approve -> act`) was reported as an ungated path. The only workaround was
+prepending a throwaway node — the verifier was teaching a worse habit than the
+one it policed. Check order fixed.
+
+Two further bugs, found by the test pass and fixed here:
+
+**Map sugar's headline feature was broken.** `_build_ctx` overwrote
+`ctx[node_id]` for every node-run sharing that id, and branches share their
+parent's id — so the last branch won and a downstream `{{ mymap.output }}` saw
+one branch's raw output instead of the reduced value. The entire point of map
+sugar. Branch node-runs are now excluded from the parent's ctx slot (a branch
+reaches its own template via `ctx["branch"]`, never the parent id).
+
+**A `from:`-only join could hang `pending` forever.** `_seed_initial_node_runs`
+derived "has incoming" from `edges` alone, so a join declared with `from:` and
+no matching `edges:` (a form the verifier explicitly accepts) was misclassified
+as an entry and pre-seeded; `_propagate_skips` then skipped over it as "already
+handled" and it never reached a terminal status. Exactly the hang the
+failed-upstream cascade exists to prevent.
+
+**Confirmed intact by the review** (no finding): checkpoint-before-dispatch
+under a real mid-batch `os._exit` kill (all 4 dispatched node-runs durably
+`running`, resume completed them); fold-order determinism across repeated
+parallel runs; no cost double-count; F5 CARDINALITY under parallelism with zero
+worker invocations; `child ⊆ parent` genuinely enforced in `delegate_tool`;
+kanban stub honesty; `--dry-run` never building a worker.
+
+## Tests
+`pytest tests/workflow tests/tools/test_workflow_tools.py -q` → **229 passed**
+(155 pre-Phase-3 + 74 new across `test_phase3_graph.py`,
+`test_phase3_runtime.py`, `test_phase3_surfaces.py`). Hermetic: no network, no
+live LLM, no real config, no real message send, no kanban write. `ruff check`
+clean on `workflow/`, `tools/workflow_tools.py`, and `tests/workflow/`;
+`PLW1514` (the Windows encoding footgun) clean on all touched files.

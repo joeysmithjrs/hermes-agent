@@ -18,16 +18,37 @@ Model/provider semantics (api §2.4, ir.PHASE2_OVERRIDE_FIELDS):
     credentials are resolved via ``hermes_cli.runtime_provider.resolve_runtime_provider``
     and passed through as ``override_*`` kwargs.
 
+Tools/max_turns semantics (ir.PHASE3_OVERRIDE_FIELDS):
+  - ``node.spec.tools`` unset -> ``toolsets=None`` passed to the child builder
+    (inherit all of the parent's toolsets, unchanged Phase 1/2 behavior).
+  - ``node.spec.tools`` set -> resolved to the minimal covering set of
+    TOOLSET names (see ``_resolve_child_toolsets``) and passed as
+    ``toolsets=[...]``. ``tools.delegate_tool.build_child_agent`` then
+    INTERSECTS that list with the parent's own toolsets (child ⊆ parent is
+    enforced there, not here). Because the grant is by toolset rather than by
+    individual tool, the actual guarantee is: (a) child toolsets ⊆ parent
+    toolsets, and (b) every requested tool's toolset is present -- the child
+    MAY also receive sibling tools that share a toolset with a requested
+    tool. There is no per-tool gating at this construction boundary. The
+    verifier (workflow/verify.py, code TOOLS_UNKNOWN) is the compile-time
+    check that every name is real; the resolution here is defense in depth,
+    not the primary gate.
+  - ``node.spec.max_turns`` set -> overrides the ``max_iterations`` passed to
+    the child builder (precedence: spec.max_turns > LiveWorker(max_iterations=)
+    > delegation.max_iterations config default).
+
 Heavy imports (``run_agent``, ``hermes_cli.runtime_provider``,
-``tools.delegate_tool``) are function-local so ``import workflow`` stays cheap
-and hermetic (no LLM/network/config touched at import time).
+``tools.delegate_tool``, ``toolsets``, ``model_tools``) are function-local so
+``import workflow`` stays cheap and hermetic (no LLM/network/config touched
+at import time).
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import threading
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..ir import Node
 
@@ -36,7 +57,10 @@ __all__ = [
     "build_runtime_parent",
     "LiveWorker",
     "resolve_effective_model",
+    "extract_cost_and_tokens",
 ]
+
+logger = logging.getLogger(__name__)
 
 # Per-process cache of constructed runtime parents. The key is the FULLY
 # RESOLVED identity of the parent (model, provider, base_url, and a digest of
@@ -237,6 +261,193 @@ def resolve_effective_model(node: Node, parent_agent: Any) -> Tuple[Optional[str
     return effective_model, effective_provider
 
 
+def _resolve_child_toolsets(tool_names: List[str], node_id: str) -> Optional[List[str]]:
+    """Resolve ``node.spec.tools`` names to the minimal covering set of
+    TOOLSET names that ``build_child_agent``'s ``toolsets=`` kwarg expects.
+
+    A name that is already a toolset name (``toolsets.validate_toolset``)
+    passes through unchanged; a bare tool name maps to its owning toolset via
+    ``model_tools.get_toolset_for_tool``. The verifier (code TOOLS_UNKNOWN)
+    already rejects unknown names at compile time, so an unresolvable name
+    here is dropped with a warning rather than raised -- this is defense in
+    depth, not the primary gate. Returns None (inherit-all, matching the
+    unset-spec.tools default) if nothing resolves, since ``toolsets=[]`` and
+    ``toolsets=None`` are already equivalent in ``build_child_agent`` (both
+    fall through to its inherit-from-parent branch) -- returning None here
+    just makes that equivalence explicit rather than accidental.
+    """
+    try:
+        import model_tools as _model_tools
+        import toolsets as _toolsets
+    except Exception as exc:  # pragma: no cover - defensive import guard
+        # Review BLOCKER #2: FAIL CLOSED. This used to return None, which
+        # `build_child_agent` reads as "inherit ALL of the parent's toolsets"
+        # -- so a node that asked to be NARROWED got the widest possible
+        # grant instead, precisely when something was already wrong. Return
+        # the raw requested names: `_build_child_agent` intersects them with
+        # the parent's expanded toolsets, so unrecognized names intersect to
+        # the empty set and the child gets nothing rather than everything.
+        logger.warning(
+            "could not import toolsets/model_tools to resolve spec.tools for node "
+            "%r (%s); failing CLOSED -- passing the requested names through so the "
+            "child is narrowed (possibly to nothing) rather than granted every "
+            "parent toolset",
+            node_id,
+            exc,
+        )
+        return sorted(tool_names)
+
+    resolved: set = set()
+    for name in tool_names:
+        try:
+            is_toolset = _toolsets.validate_toolset(name)
+        except Exception:
+            is_toolset = False
+        if is_toolset:
+            resolved.add(name)
+            continue
+        try:
+            owning_toolset = _model_tools.get_toolset_for_tool(name)
+        except Exception:
+            owning_toolset = None
+        if owning_toolset:
+            resolved.add(owning_toolset)
+        else:
+            # Review BLOCKER #2: an unresolvable name is NOT dropped. Dropping
+            # every name left `resolved` empty, which returned None ->
+            # inherit-all. Keep the name instead: it will not intersect the
+            # parent's toolsets, so it contributes nothing, which is the
+            # fail-closed direction.
+            #
+            # This is a real case, not a defensive hypothetical: the
+            # verifier's F3 live-tool tags (trade_live, trade_paper, exec,
+            # send_email, notify_telegram -- verify.py's _LIVE_TOOL_TAGS) are
+            # design-doc placeholders that compile fine but resolve to no
+            # runtime toolset. A gated, side-effecting node scoped with
+            # `tools: [send_email]` is exactly the node that must NOT be
+            # silently handed the parent's entire toolset.
+            resolved.add(name)
+            logger.warning(
+                "node %r spec.tools entry %r did not resolve to a known runtime "
+                "tool or toolset name; keeping it so it fails CLOSED (it will not "
+                "intersect the parent's toolsets, granting nothing) rather than "
+                "widening the child to every parent toolset",
+                node_id,
+                name,
+            )
+    # `resolved` is non-empty whenever `tool_names` was non-empty (unresolvable
+    # names are kept above), so this never degrades to the inherit-all None.
+    return sorted(resolved) if resolved else None
+
+
+# ---------------------------------------------------------------------------
+# Cost/token extraction (Phase 3 §C)
+# ---------------------------------------------------------------------------
+
+# Cost keys observed (or plausible) in a child result envelope.
+_COST_KEYS = ("cost_usd", "total_cost_usd", "total_cost", "cost")
+# Token-count key aliases. tools/delegate_tool.py's real child-result entry
+# (``_run_single_child``'s ``entry``) nests counts as
+# ``{"tokens": {"input": N, "output": N}}`` -- bare "input"/"output", not
+# "*_tokens" -- so the "tokens" container gets its own bare-name aliases in
+# addition to the generic ones used by other shapes/tests.
+_TOKENS_IN_KEYS = ("tokens_in", "input_tokens", "prompt_tokens")
+_TOKENS_OUT_KEYS = ("tokens_out", "output_tokens", "completion_tokens")
+# One nested level under these container keys is also searched. "tokens" is
+# delegate_tool's real container name; the rest are common alternate shapes.
+_NESTED_CONTAINERS = ("result", "usage", "token_usage", "metrics", "cost", "tokens")
+
+
+def _first_scalar(d: Dict[str, Any], keys: Tuple[str, ...]) -> Tuple[Any, bool]:
+    """First present, non-container value among ``keys`` in ``d``.
+
+    Skips dict/list values -- a key like "cost" can legitimately be either a
+    scalar cost value OR a nested container of cost-shaped fields (both
+    "cost" the key and "cost" the container are checked), and a container
+    value must not be mistaken for a (uncoercible) scalar that then blocks
+    the nested-container search from ever running.
+    """
+    for k in keys:
+        if k in d:
+            v = d[k]
+            if v is None or isinstance(v, (dict, list)):
+                continue
+            return v, True
+    return None, False
+
+
+def _coerce_float(v: Any) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _coerce_int(v: Any) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def extract_cost_and_tokens(result: Any) -> Tuple[float, int, int]:
+    """Best-effort ``(cost_usd, tokens_in, tokens_out)`` from a child result.
+
+    Accepts a dict, a JSON string that parses to a dict, or anything else
+    (returns zeros for the latter two -- never raises). Searches the top
+    level AND one nested level under common containers (result, usage,
+    token_usage, metrics, cost, tokens); first match wins per field, and a
+    present-but-non-numeric value coerces to 0 rather than falling through to
+    a later container.
+    """
+    parsed = result
+    if isinstance(result, str):
+        try:
+            parsed = json.loads(result)
+        except (TypeError, ValueError):
+            return 0.0, 0, 0
+    if not isinstance(parsed, dict):
+        return 0.0, 0, 0
+
+    cost_usd = 0.0
+    tokens_in = 0
+    tokens_out = 0
+    found_cost = found_tin = found_tout = False
+
+    v, ok = _first_scalar(parsed, _COST_KEYS)
+    if ok:
+        cost_usd, found_cost = _coerce_float(v), True
+    v, ok = _first_scalar(parsed, _TOKENS_IN_KEYS)
+    if ok:
+        tokens_in, found_tin = _coerce_int(v), True
+    v, ok = _first_scalar(parsed, _TOKENS_OUT_KEYS)
+    if ok:
+        tokens_out, found_tout = _coerce_int(v), True
+
+    for container_name in _NESTED_CONTAINERS:
+        if found_cost and found_tin and found_tout:
+            break
+        container = parsed.get(container_name)
+        if not isinstance(container, dict):
+            continue
+        if not found_cost:
+            v, ok = _first_scalar(container, _COST_KEYS)
+            if ok:
+                cost_usd, found_cost = _coerce_float(v), True
+        if not found_tin:
+            in_keys = _TOKENS_IN_KEYS + (("input",) if container_name == "tokens" else ())
+            v, ok = _first_scalar(container, in_keys)
+            if ok:
+                tokens_in, found_tin = _coerce_int(v), True
+        if not found_tout:
+            out_keys = _TOKENS_OUT_KEYS + (("output",) if container_name == "tokens" else ())
+            v, ok = _first_scalar(container, out_keys)
+            if ok:
+                tokens_out, found_tout = _coerce_int(v), True
+
+    return cost_usd, tokens_in, tokens_out
+
+
 def _extract_result_text(result: Any) -> str:
     """Best-effort text extraction from a (possibly JSON-string) child result."""
     parsed = result
@@ -361,11 +572,40 @@ class LiveWorker:
             except Exception:
                 max_iterations = DEFAULT_MAX_ITERATIONS
 
+        # spec.max_turns wins over both the config default AND
+        # LiveWorker(max_iterations=...) -- it is the node author's explicit,
+        # per-node ask. Coerce defensively: a non-numeric or non-positive
+        # value is ignored (with a warning) rather than breaking the run.
+        spec_max_turns = getattr(spec, "max_turns", None) if spec is not None else None
+        if spec_max_turns is not None:
+            try:
+                coerced_max_turns = int(spec_max_turns)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "node %r spec.max_turns=%r is not an int; ignoring", node.id, spec_max_turns
+                )
+                coerced_max_turns = None
+            if coerced_max_turns is not None:
+                if coerced_max_turns > 0:
+                    max_iterations = coerced_max_turns
+                else:
+                    logger.warning(
+                        "node %r spec.max_turns=%r is not positive; ignoring",
+                        node.id,
+                        spec_max_turns,
+                    )
+
+        # spec.tools unset -> inherit all of the parent's toolsets (toolsets=
+        # None); set -> resolve to the minimal covering toolset names (see
+        # module docstring for the exact ⊆-guarantee this provides).
+        spec_tools = list(getattr(spec, "tools", None) or []) if spec is not None else []
+        child_toolsets = _resolve_child_toolsets(spec_tools, node.id) if spec_tools else None
+
         child = child_builder(
             task_index=0,
             goal=goal,
             context=context,
-            toolsets=None,
+            toolsets=child_toolsets,
             model=child_model,
             max_iterations=max_iterations,
             task_count=1,
@@ -378,12 +618,33 @@ class LiveWorker:
         )
         result = child_runner(0, goal, child=child, parent_agent=parent)
 
-        cost_usd = 0.0
-        if isinstance(result, dict):
-            try:
-                cost_usd = float(result.get("cost_usd") or 0.0)
-            except (TypeError, ValueError):
-                cost_usd = 0.0
+        cost_usd, tokens_in, tokens_out = extract_cost_and_tokens(result)
+        # The returned entry is NOT a complete cost record, and that is the
+        # real cause of the Phase 2 under-report. `tools.delegate_tool` builds
+        # the child entry with `tokens: {input, output}` but stashes the dollar
+        # figure under `_child_cost_usd`, which `_finalize_child_results` then
+        # POPS off the entry and folds into the parent's session total — so by
+        # the time `run_child_agent` returns, the caller can never see what the
+        # child cost. Parsing the result harder cannot fix that; the number is
+        # genuinely gone.
+        #
+        # The child agent object itself still carries the counters, and we hold
+        # a reference to it (we built it), so read them straight off the child.
+        # This is exact and per-child rather than a diff of the parent's running
+        # total, which is what makes it correct under `max_parallel_nodes > 1`:
+        # several children fold into the same parent concurrently, so a
+        # before/after delta on the parent would mis-attribute cost between
+        # nodes. `child.close()` (called in the runner's finally block) releases
+        # sessions/handles but does not reset these attributes.
+        #
+        # Only used as a FALLBACK, so an explicit cost/token in the result --
+        # which is what the test stubs return -- always wins.
+        if not cost_usd:
+            cost_usd = _coerce_float(getattr(child, "session_estimated_cost_usd", 0.0))
+        if not tokens_in:
+            tokens_in = _coerce_int(getattr(child, "session_prompt_tokens", 0))
+        if not tokens_out:
+            tokens_out = _coerce_int(getattr(child, "session_completion_tokens", 0))
 
         return {
             "output": {
@@ -394,6 +655,8 @@ class LiveWorker:
                 "effective_provider": effective_provider,
             },
             "cost_usd": cost_usd,
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
             "effective_model": effective_model,
             "effective_provider": effective_provider,
         }

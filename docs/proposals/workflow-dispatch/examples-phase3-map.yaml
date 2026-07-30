@@ -1,0 +1,65 @@
+# Phase 3 example — `map` sugar + the `majority` reducer.
+#
+# `map` is fanout + join in ONE node. A plain `fanout` node's own output is the
+# list of branch node_run_ids (data lives on the branches, so you need a
+# separate `join` node to reduce it). A `map` node reduces its branches itself:
+# its own output IS the reduced value, so `{{ classify.output.* }}` downstream
+# reads reduced data with no join node in the graph.
+#
+# Reduce types: concat (default) | top_k | first_k | majority | best.
+# `majority` votes over branch outputs. Tie-break is explicit: on an equal
+# count the value that appeared FIRST (lowest branch index) wins, and the
+# result carries "tie": true so a caller can tell a real majority from a
+# coin-flip.
+#
+# max_branches is REQUIRED (F5) and is a hard runtime cap: a list longer than
+# it fails the node CARDINALITY *without* spawning anything.
+#
+# Validate:  hermes workflow validate examples-phase3-map.yaml
+# Dry run:   hermes workflow run examples-phase3-map.yaml --dry-run
+# Fake run:  HERMES_WORKFLOW_FAKE=1 hermes workflow run examples-phase3-map.yaml
+workflow: phase3_map_demo
+version: 1
+nodes:
+  - id: seed
+    kind: script
+    run: workflow.examples.echo
+    input:
+      items: ["filing-a.pdf", "filing-b.pdf", "filing-c.pdf"]
+
+  - id: classify
+    kind: map
+    over: "{{ seed.output.echo.items }}"
+    max_branches: 8
+    # The map node's own output is this reduction over its branch outputs.
+    reduce:
+      type: majority
+      key: label
+    branch:
+      kind: agent
+      spec:
+        prompt: |
+          Read {{ branch }} and classify its overall sentiment.
+          Reply with JSON only: {"label": "bullish"|"bearish"|"neutral"}
+        # Per-branch model override: a cheap model is plenty for a label.
+        # Unset would inherit the runtime parent's model (Phase 2 semantics).
+        model: "anthropic/claude-haiku-4-5-20251001"
+        max_turns: 3
+        output:
+          type: object
+          required: [label]
+
+  - id: report
+    kind: agent
+    spec:
+      prompt: |
+        {{ classify.output.count }} of {{ classify.output.total }} filings were
+        classified "{{ classify.output.winner }}". Tie: {{ classify.output.tie }}.
+        Write a two-sentence desk note.
+
+edges:
+  - { from: seed, to: classify }
+  - { from: classify, to: report }
+
+triggers:
+  - { kind: manual }

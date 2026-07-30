@@ -27,6 +27,10 @@ __all__ = [
     "NODE_STATUSES",
     "OVERRIDE_ONLY_FIELDS",
     "PHASE2_OVERRIDE_FIELDS",
+    "PHASE3_OVERRIDE_FIELDS",
+    "ON_FAIL_POLICIES",
+    "DEFAULT_ON_FAIL",
+    "REDUCE_TYPES",
 ]
 
 # design §2.2 — only justified kinds
@@ -65,18 +69,44 @@ NODE_STATUSES = (
     "awaiting_gate",
 )
 
-# F2 — override-only fields the Phase 1 inherit path cannot honor
-OVERRIDE_ONLY_FIELDS = ("tools", "profile", "max_turns", "workspace")
+# F2 — override-only fields NO execution path honors yet. A field only leaves
+# this tuple when a real execution path enforces it, so the verifier never
+# accepts a granularity knob it silently drops.
+#
+# Phase 3 shrinks this list to the two fields that are still unenforced:
+#   - profile:   no child-construction path applies a named profile.
+#   - workspace: no filesystem/workspace isolation boundary is enforced.
+OVERRIDE_ONLY_FIELDS = ("profile", "workspace")
 
-# Phase 2: model/provider ARE now honored via the live worker's child-
+# Phase 2: model/provider ARE honored via the live worker's child-
 # construction path (workflow.runtime.live.LiveWorker -> resolve_effective_model
 # + tools.delegate_tool.build_child_agent override_* kwargs) — see verify.py's
-# _check_node, which no longer rejects/warns on these two fields. They are
-# deliberately NOT part of OVERRIDE_ONLY_FIELDS above. The remaining
-# OVERRIDE_ONLY_FIELDS (tools/profile/max_turns/workspace) are still not
-# enforced by any execution path, so they are still rejected — we do not
-# silently claim an isolation boundary we don't actually enforce.
+# _check_node, which no longer rejects/warns on these two fields.
 PHASE2_OVERRIDE_FIELDS = ("model", "provider")
+
+# Phase 3: tools/max_turns are now honored too.
+#   - tools:     LiveWorker resolves the requested tool names to the minimal
+#                covering toolsets and passes them as build_child_agent's
+#                ``toolsets=`` kwarg, which itself intersects with the parent's
+#                toolsets (child ⊆ parent). Verified against the known tool /
+#                toolset name universe at compile time (code TOOLS_UNKNOWN).
+#   - max_turns: threaded through to the child's ``max_iterations``.
+PHASE3_OVERRIDE_FIELDS = ("tools", "max_turns")
+
+# Phase 3 §A — per-node failure policy. Applied when a node-run ends `failed`:
+#   fail_run         abort the whole run immediately; nothing further starts.
+#   skip_downstream  DEFAULT (Phase 1/2 behavior): everything downstream of the
+#                    failed node cascades to `skipped`; unrelated branches keep
+#                    running and the run ends `partial`/`failed`.
+#   continue         the failure does not block downstream — the edge counts as
+#                    satisfied with a null output, so downstream still runs.
+#   retry            re-run the node up to `attempts` times (default 2) before
+#                    falling back to `skip_downstream`.
+ON_FAIL_POLICIES = ("fail_run", "skip_downstream", "continue", "retry")
+DEFAULT_ON_FAIL = "skip_downstream"
+
+# Phase 3 §A — join/map reducer types implemented by the driver.
+REDUCE_TYPES = ("concat", "top_k", "first_k", "majority", "best")
 
 
 @dataclass
@@ -140,6 +170,15 @@ class Node:
     attempts: Optional[int] = None
     idempotent: Optional[bool] = None
     side_effects: Optional[str] = None  # none|external (F6)
+    # Phase 3 §A — failure policy (see ON_FAIL_POLICIES). None means
+    # DEFAULT_ON_FAIL, i.e. the Phase 1/2 skip-downstream cascade, so every
+    # pre-Phase-3 workflow keeps exactly its old behavior.
+    on_fail: Optional[str] = None
+
+    @property
+    def fail_policy(self) -> str:
+        """The effective on_fail policy (never None)."""
+        return self.on_fail or DEFAULT_ON_FAIL
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Node":
@@ -157,6 +196,7 @@ class Node:
             attempts=d.get("attempts"),
             idempotent=d.get("idempotent"),
             side_effects=d.get("side_effects"),
+            on_fail=d.get("on_fail"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -174,6 +214,7 @@ class Node:
             "attempts": self.attempts,
             "idempotent": self.idempotent,
             "side_effects": self.side_effects,
+            "on_fail": self.on_fail,
         }
         return {k: v for k, v in d.items() if v not in (None, [], {}) or k in ("id", "kind")}
 

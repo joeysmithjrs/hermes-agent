@@ -331,19 +331,20 @@ triggers:
 
 
 def test_f2_agent_override_fields_rejected_strict(wf_home):
-    """F2 (reject path): an agent setting tools/profile/max_turns/workspace
-    is rejected by default (no execution path enforces them yet).
+    """F2 (reject path): an agent setting profile/workspace is rejected by
+    default (no execution path enforces them yet -- ir.OVERRIDE_ONLY_FIELDS).
 
-    model/provider are NOT in this list any more — Phase 2 honors them via
-    the LiveWorker override path (see test_phase2_model_provider_not_rejected).
-
-    Uses a non-live tool (web_search) so only PHASE1_OVERRIDE fires, not the
-    live-tool SIDE_EFFECTS rule.
+    Phase 3 note: this used to also cover tools/max_turns. Both are now
+    genuinely honored (LiveWorker resolves spec.tools to toolsets and passes
+    spec.max_turns as max_iterations -- ir.PHASE3_OVERRIDE_FIELDS), so they
+    were removed from OVERRIDE_ONLY_FIELDS and no longer belong in this list;
+    see test_phase3_tools_valid_names_compile_clean /
+    test_phase3_max_turns_compiles_clean below for their positive coverage,
+    and model/provider were already carved out in Phase 2 (see
+    test_phase2_model_provider_not_rejected).
     """
     for field_yaml in [
-        "tools: [web_search]",
         "profile: trader",
-        "max_turns: 3",
         "workspace: {root: /tmp}",
     ]:
         yaml = f"""
@@ -364,13 +365,14 @@ triggers:
 
 
 def test_f2_agent_override_fields_warn_behind_flag(wf_home):
-    """F2 (warn path): with phase1_warn_overrides=true the same fields downgrade
-    to a warning — the boundary is loud, not silently dropped, and the workflow
-    is accepted."""
+    """F2 (warn path): with phase1_warn_overrides=true the same still-override-
+    only fields (profile/workspace) downgrade to a warning — the boundary is
+    loud, not silently dropped, and the workflow is accepted.
+
+    Phase 3 note: tools/max_turns were dropped from this list -- see
+    test_f2_agent_override_fields_rejected_strict's docstring."""
     for field_yaml in [
-        "tools: [web_search]",
         "profile: trader",
-        "max_turns: 3",
         "workspace: {root: /tmp}",
     ]:
         yaml = f"""
@@ -391,6 +393,112 @@ triggers:
         assert "PHASE1_OVERRIDE" in codes, (field_yaml, codes)
         # all issues are warnings (no errors raised -> VerifiedIR returned)
         assert all(i.severity == "warning" for i in vir.issues), (field_yaml, vir.issues)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — spec.tools / spec.max_turns are genuinely honored
+# ---------------------------------------------------------------------------
+
+
+def test_phase3_tools_valid_names_compile_clean(wf_home):
+    """Phase 3: spec.tools is resolved by the LiveWorker to a minimal covering
+    toolset and passed to the child agent builder (ir.PHASE3_OVERRIDE_FIELDS),
+    so it is no longer in OVERRIDE_ONLY_FIELDS. A list of recognized tool /
+    toolset names must compile clean in strict mode: no PHASE1_OVERRIDE (it's
+    honored now) and no TOOLS_UNKNOWN (the names are real)."""
+    yaml = """
+workflow: toolsvalid
+version: 1
+nodes:
+  - id: a
+    kind: agent
+    spec:
+      prompt: do
+      tools: [web_search, read_file]
+edges: []
+triggers:
+  - { kind: manual }
+"""
+    vir = _verify(yaml, warn=False)
+    assert vir.issues == [], vir.issues
+
+
+def test_phase3_max_turns_compiles_clean(wf_home):
+    """Phase 3: spec.max_turns is threaded through to the child's
+    max_iterations (ir.PHASE3_OVERRIDE_FIELDS), so it is no longer in
+    OVERRIDE_ONLY_FIELDS -- strict mode accepts it with zero issues."""
+    yaml = """
+workflow: maxturnsvalid
+version: 1
+nodes:
+  - id: a
+    kind: agent
+    spec:
+      prompt: do
+      max_turns: 3
+edges: []
+triggers:
+  - { kind: manual }
+"""
+    vir = _verify(yaml, warn=False)
+    assert vir.issues == [], vir.issues
+
+
+def test_phase3_tools_and_max_turns_together_compile_clean(wf_home):
+    """Both new Phase 3 honored fields together, alongside the Phase 2 honored
+    model/provider pair, produce zero issues in strict mode -- the carve-outs
+    stack rather than being mutually exclusive."""
+    yaml = """
+workflow: toolsandmaxturns
+version: 1
+nodes:
+  - id: a
+    kind: agent
+    spec:
+      prompt: do
+      model: fake/model-1
+      provider: fake-provider
+      tools: [web_search]
+      max_turns: 5
+edges: []
+triggers:
+  - { kind: manual }
+"""
+    vir = _verify(yaml, warn=False)
+    assert vir.issues == [], vir.issues
+
+
+def test_phase3_unknown_tool_name_rejected(wf_home):
+    """Phase 3: an unrecognized tool name in spec.tools is rejected at compile
+    time with TOOLS_UNKNOWN (design: "the verifier validates the names and
+    rejects unknown ones").
+
+    The name-validity check is implemented to skip entirely when the
+    toolsets registry cannot be imported (so a missing/broken registry never
+    turns into a spurious hard-reject of otherwise-valid workflows). Skip
+    gracefully here rather than assuming the registry is loadable in every
+    environment this suite runs in.
+    """
+    try:
+        import toolsets  # noqa: F401  -- the tool/toolset name registry
+    except ImportError:
+        pytest.skip("toolsets registry not importable in this environment")
+
+    yaml = """
+workflow: badtool
+version: 1
+nodes:
+  - id: a
+    kind: agent
+    spec:
+      prompt: do
+      tools: [this_tool_definitely_does_not_exist_xyz]
+edges: []
+triggers:
+  - { kind: manual }
+"""
+    codes = _rejected_codes(yaml, warn=False)
+    assert "TOOLS_UNKNOWN" in codes, codes
 
 
 def test_side_effecting_agent_missing_side_effects_rejected(wf_home):
