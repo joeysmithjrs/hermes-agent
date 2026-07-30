@@ -96,6 +96,17 @@ def render(template: Any, ctx: Dict[str, Any]) -> Any:
     return _TEMPLATE_RE.sub(sub, template)
 
 
+def _dotted_root_present(field: str, output: Any) -> bool:
+    """True if the first component of a dotted ``field`` path exists in
+    ``output`` — used only to decide whether ``$.field`` should shorthand
+    into ``upstream_output["output"]`` (matches the bare-root convention
+    used elsewhere in this module, e.g. ``resolve_path``)."""
+    if not isinstance(output, dict):
+        return False
+    root = field.split(".", 1)[0]
+    return root in output
+
+
 def eval_condition(condition: str, upstream_output: Any) -> bool:
     """Evaluate ``$.field op literal`` or ``true``/``false`` against upstream output."""
     if condition is None:
@@ -110,20 +121,25 @@ def eval_condition(condition: str, upstream_output: Any) -> bool:
         # Unknown condition form — fail closed (design §2.3: no arbitrary Python)
         raise TemplateError(f"unparseable condition '{condition}'")
     field, op, lit = m.group("field"), m.group("op"), m.group("lit").strip()
-    # Resolve $.field against upstream_output (a dict/output envelope)
+    # Resolve $.field against upstream_output (a dict/output envelope). `field`
+    # may itself be a dotted path (e.g. "echo.score" against a script whose
+    # output nests one level, such as the `workflow.examples.echo` demo
+    # callable which wraps its input as {"echo": {...}}) — walk each
+    # component rather than treating the whole dotted string as one flat key.
     val = upstream_output
-    if isinstance(val, dict) and "output" in val and field in (val.get("output") or {}):
+    if isinstance(val, dict) and "output" in val and _dotted_root_present(field, val.get("output")):
         val = val["output"]
-    if isinstance(val, dict):
-        if field not in val:
+    for part in field.split("."):
+        if isinstance(val, dict):
+            if part not in val:
+                if op == "exists":
+                    return False
+                raise TemplateError(f"condition field '{field}' not in upstream output")
+            val = val[part]
+        else:
             if op == "exists":
-                return False
-            raise TemplateError(f"condition field '{field}' not in upstream output")
-        val = val[field]
-    else:
-        if op == "exists":
-            return val is not None
-        raise TemplateError(f"cannot index '{field}' on non-dict upstream output")
+                return val is not None
+            raise TemplateError(f"cannot index '{part}' on non-dict upstream output for '{field}'")
     if op == "exists":
         return True
     # Parse literal

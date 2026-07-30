@@ -304,15 +304,27 @@ design's status enum) had never had a producer.
 
 ### Note on condition field resolution
 
-`eval_condition`'s field lookup is single-level: `$.field` looks up `field`
-directly on the upstream node's output dict (after unwrapping one
-`{"output": ...}` envelope layer if present) — it does not traverse nested
-paths despite the field regex permitting dots. This is pre-existing
-(pass-1) `expr.py` behavior, unchanged by this pass. The regression tests'
-`check` node is an `agent` node with a `FakeWorker(outputs=...)`-supplied
-flat output dict (e.g. `{"score": 3}`) for this reason, rather than a
-`script` node through `workflow.examples.echo` (which wraps its input under
-an `"echo"` key and would require nested traversal the DSL doesn't support).
+`eval_condition`'s field lookup originally treated `$.field` as a single flat
+dict key — it did not traverse dotted paths despite the field regex
+permitting dots (`[A-Za-z_][A-Za-z0-9_\.]*`). The pass-3 regression tests'
+`check` node used an `agent` node with a `FakeWorker(outputs=...)`-supplied
+flat output dict (e.g. `{"score": 3}`) specifically to route around this gap
+rather than fix it.
+
+**Fixed by the operator during independent live re-verification of this
+pass** (before merge, same session): `eval_condition` now splits `field` on
+`.` and walks each component (`_dotted_root_present` decides whether to
+unwrap one `{"output": ...}` envelope layer first, mirroring the bare-root
+convention `resolve_path` already uses elsewhere in `expr.py`). Confirmed
+live with the operator's *original* bug-report YAML — `check` as a `script`
+node through `workflow.examples.echo` (which wraps its input as
+`{"echo": {...}}`), condition `"$.echo.score < 5"` — which failed closed
+(both branches skipped) before this addition and now correctly resolves
+(`stop_path` succeeds, `continue_path` skipped). New regression test:
+`test_condition_field_resolves_dotted_path_against_wrapped_script_output`.
+
+`pytest tests/workflow -q` → **66 passed** (60 from pass 2 + 5 from the
+original pass-3 fix + 1 for the dotted-path fix).
 
 ### Anomaly encountered during this pass
 
@@ -325,5 +337,10 @@ suspicious: the duplicated import was corrected, and the unrequested
 `scripts.py` change was reverted (`git checkout -- workflow/runtime/scripts.py`)
 since it was unneeded for this fix and the registry is deliberately frozen/
 minimal. Flagged to the operator directly rather than silently complied
-with. Worth the operator independently confirming `git log` / `git diff`
-provenance on this branch before merge, given this in-session anomaly.
+with.
+
+**Operator confirmed clean before merge:** `git diff workflow/runtime/scripts.py`
+is empty (no unrequested changes present in the final tree); the registry
+contains exactly the 4 pre-existing callables (`concat`, `top_k`,
+`notify_telegram`, `echo`); `driver.py`'s `from ..expr import` line appears
+exactly once. No evidence of the anomaly persisting into the committed state.

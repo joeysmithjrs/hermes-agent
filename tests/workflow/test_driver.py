@@ -568,3 +568,47 @@ def test_malformed_condition_rejected_at_compile_time(wf_home):
         compile_text(MALFORMED_CONDITION_YAML, phase1_warn_overrides=True)
     codes = [i.code for i in exc.value.issues if i.severity == "error"]
     assert "CONDITION" in codes, codes
+
+
+DOTTED_CONDITION_YAML = """
+workflow: cond_dotted
+version: 1
+nodes:
+  - id: check
+    kind: script
+    run: workflow.examples.echo
+    input: {score: 3}
+  - id: stop_path
+    kind: script
+    run: workflow.examples.echo
+    input: {branch: "stop"}
+  - id: continue_path
+    kind: script
+    run: workflow.examples.echo
+    input: {branch: "continue"}
+edges:
+  - { from: check, to: stop_path, condition: "$.echo.score < 5" }
+  - { from: check, to: continue_path, condition: "$.echo.score >= 5" }
+triggers:
+  - { kind: manual }
+"""
+
+
+def test_condition_field_resolves_dotted_path_against_wrapped_script_output(wf_home):
+    """Regression for a bug found while independently re-verifying pass 3 live:
+    eval_condition's regex allows a dotted field path (`[A-Za-z_][A-Za-z0-9_.]*`)
+    but the original lookup treated the whole dotted string as one flat dict
+    key, so `$.echo.score` against `workflow.examples.echo`'s wrapped output
+    (`{"echo": {"score": 3}}`) raised TemplateError and was caught by
+    `_edge_state` as `blocked` — silently skipping BOTH branches instead of
+    correctly selecting one. `eval_condition` must walk each `.`-separated
+    component instead of indexing the raw dotted string."""
+    from workflow import compile_text, run
+    from workflow.runtime.worker import FakeWorker
+
+    vir = compile_text(DOTTED_CONDITION_YAML, phase1_warn_overrides=True)
+    env = run(vir, input={}, worker=FakeWorker())
+    assert env["status"] == "succeeded", env
+    assert "stop_path" in env["succeeded"], env
+    assert "continue_path" in env["skipped"], env
+    assert "continue_path" not in env["succeeded"], env
