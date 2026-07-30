@@ -19,7 +19,9 @@ __all__ = ["render", "resolve_path", "eval_condition", "validate_condition_synta
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*(.*?)\s*\}\}")
 # roots that are NOT subject to the bare node.field -> node.output.field shorthand
-_BARE_ROOTS = ("input", "branch", "run")
+# (`workspace` is the post-Phase-3 named-workspace block: paths/names, never a
+# node envelope, so the `.output` shorthand must not apply to it either)
+_BARE_ROOTS = ("input", "branch", "run", "workspace")
 
 # Shared by eval_condition (runtime) and validate_condition_syntax (compile-time,
 # workflow/verify.py) — one regex, not two, so the two can't drift apart.

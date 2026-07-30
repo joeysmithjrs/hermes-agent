@@ -322,6 +322,11 @@ class WorkflowIR:
     gates: Dict[str, Gate] = field(default_factory=dict)
     max_budget_usd: Optional[float] = None
     notify: Optional[Dict[str, Any]] = None
+    # Post-Phase-3: name of the persistent workspace this workflow's nodes
+    # share (workflow.store.workspace). None = no workspace; nodes then have no
+    # `{{ workspace.* }}` root at all (the verifier rejects references to it),
+    # so every pre-workspace workflow behaves exactly as before.
+    workspace: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "WorkflowIR":
@@ -342,6 +347,7 @@ class WorkflowIR:
             gates=gates,
             max_budget_usd=d.get("max_budget_usd"),
             notify=d.get("notify"),
+            workspace=d.get("workspace"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -357,6 +363,7 @@ class WorkflowIR:
             "gates": {gid: g.to_dict() for gid, g in self.gates.items()},
             "max_budget_usd": self.max_budget_usd,
             "notify": self.notify,
+            "workspace": self.workspace,
         }
 
     def content_hash(self) -> str:

@@ -56,6 +56,11 @@ def _from_yaml_mapping(raw: Dict[str, Any]) -> WorkflowIR:
         gates=gates,
         max_budget_usd=raw.get("max_budget_usd"),
         notify=raw.get("notify"),
+        # Top-level `workspace: <name>` pins the whole workflow to a named
+        # persistent workspace (workflow.store.workspace). Note this is the
+        # WORKFLOW-level key; the per-node `spec.workspace` mapping is a
+        # different, still-unenforced field (ir.OVERRIDE_ONLY_FIELDS).
+        workspace=raw.get("workspace"),
     )
 
 

@@ -381,6 +381,8 @@ class Driver:
         self.state: RunState = RunState(run_id=self.run_id, workflow_id=self.ir.id, started_at=_ts())
         # transient branch items (not persisted): node_run_id -> branch item
         self._branch_items: Dict[str, Any] = {}
+        # Resolved once per execute() from ir.workspace (see _ensure_workspace).
+        self._workspace_ctx: Optional[Dict[str, Any]] = None
         # TASK 4: guards mutation of RunState aggregates (cost_usd,
         # tokens_in/out, succeeded/failed) from `_finish_top_level`/
         # `_finish_branch` -- both are only ever called from the main
@@ -415,6 +417,7 @@ class Driver:
     def execute(self, *, dry_run: bool = False, retry_failed: bool = False, from_node: Optional[str] = None) -> Dict[str, Any]:
         """Run to completion (or until a gate parks). Returns a RunEnvelope dict."""
         fs.ensure_run_dirs(self.run_id)
+        self._ensure_workspace(dry_run=dry_run)
         if not dry_run:
             ckpt.write_run_record(self.run_id, self._run_record_dict())
             from ..store import index
@@ -863,9 +866,36 @@ class Driver:
         if nr.status == "failed":
             self._apply_on_fail(nr, node)
 
+    def _ensure_workspace(self, *, dry_run: bool = False) -> None:
+        """Materialize this run's corner of the workflow's named workspace.
+
+        A ``--dry-run` plans without executing, so it must not create
+        directories either -- it only resolves the ctx block (which is
+        path/name data, no I/O beyond a listing of what already exists).
+        Workspace creation is idempotent: re-entering an existing workspace on
+        a resume is the normal case and never clears anything, which is what
+        makes cross-run seeding work.
+        """
+        self._workspace_ctx = None
+        name = getattr(self.ir, "workspace", None)
+        if not name:
+            return
+        from ..store import workspace as ws
+
+        if not dry_run:
+            ws.ensure_workspace(name, self.run_id)
+        self._workspace_ctx = ws.workspace_context(name, self.run_id)
+
     def _build_ctx(self, node: Node) -> Dict[str, Any]:
         """Build the template ctx from succeeded upstream outputs + run input."""
         ctx: Dict[str, Any] = {"input": self.input}
+        # Named workspace (post-Phase-3): paths + names only, never file
+        # bodies, so `{{ workspace.dir }}` renders a path an agent then reads
+        # with its ordinary file tools at run time. Absent when the workflow
+        # pins no workspace -- the verifier rejects `{{ workspace.* }}` in that
+        # case, so a missing root here is never reached by a verified graph.
+        if getattr(self, "_workspace_ctx", None):
+            ctx["workspace"] = dict(self._workspace_ctx)
         # node outputs (envelope-shaped: {output: ...})
         #
         # Review (test pass) BUG #1: BRANCH node-runs are excluded. Every

@@ -167,6 +167,15 @@ def verify_ir(ir: WorkflowIR, *, phase1_warn_overrides: bool = False) -> Verifie
         if g.on_timeout == "approve_auto" and not g.dual_control:
             warn("GATE_SECURITY", gid, "approve_auto is insecure (auto-approves on timeout)")
 
+    # ---- workspace (post-Phase-3): name must be legal ----------------------
+    if ir.workspace is not None:
+        from .store.workspace import WorkspaceError, validate_workspace_name
+
+        try:
+            validate_workspace_name(ir.workspace)
+        except WorkspaceError as exc:
+            err("WORKSPACE", None, str(exc))
+
     # ---- live-tool gating (F3): side-effecting node reachable without gate --
     _check_live_tool_gating(nodes, ir, err)
 
@@ -471,6 +480,19 @@ def _check_template_refs(n: Node, ir: WorkflowIR, err) -> None:
         path = m.group(1)
         head = path.split(".")[0]
         if head in ("input", "branch", "run"):
+            continue
+        if head == "workspace":
+            # `{{ workspace.dir }}` only resolves when the workflow actually
+            # pins one -- otherwise the driver would build no such ctx root and
+            # the render would blow up mid-run. Reject at compile time instead.
+            if ir.workspace:
+                continue
+            err(
+                "TEMPLATE",
+                n.id,
+                f"prompt references '{{{{ {path} }}}}' but the workflow declares no "
+                "top-level `workspace:` name",
+            )
             continue
         if head not in node_ids:
             err("TEMPLATE", n.id, f"prompt references unknown node '{head}' in '{{{{ {path} }}}}'")
