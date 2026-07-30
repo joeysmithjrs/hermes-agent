@@ -8,7 +8,8 @@ Defaults:
   enabled: false, max_budget_usd: 10.0, max_parallel_nodes: 4,
   default_node_timeout_s: 1800, phase1_warn_overrides: false,
   live_model: null, live_provider: null, notify_target: null,
-  notify_on: [failed, partial, awaiting_gate].
+  notify_on: [failed, partial, awaiting_gate], notify_preset: null,
+  kanban_projection: false, kanban_board: null.
 Does NOT add new required HERMES_* env vars for behavior. MAY use HERMES_HOME
 (existing) and optional HERMES_WORKFLOW_FAKE=1 (documented).
 """
@@ -34,6 +35,15 @@ DEFAULTS: Dict[str, Any] = {
     # (workflow.runtime.notify — owned by another concurrent change).
     "notify_target": None,
     "notify_on": ["failed", "partial", "awaiting_gate"],
+    # Phase 3: named status-filter shorthand for notify_on (see
+    # workflow.runtime.notify.NOTIFY_PRESETS). A workflow's own notify.preset
+    # still wins over this; this is only the config-level fallback.
+    "notify_preset": None,
+    # Phase 3: mirror run/node status onto a kanban card for visibility.
+    # Off by default -- see workflow.runtime.kanban module docstring for why
+    # this is currently a documented no-op rather than a live board write.
+    "kanban_projection": False,
+    "kanban_board": None,
 }
 
 __all__ = ["load_workflow_config", "DEFAULTS"]

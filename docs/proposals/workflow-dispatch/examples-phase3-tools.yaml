@@ -1,0 +1,73 @@
+# Phase 3 example — per-node tool subset, max_turns, and output schema.
+#
+# `spec.tools` (NEW in Phase 3 — Phase 1/2 rejected it rather than pretend to
+# enforce it). What it actually guarantees, precisely:
+#
+#   - The requested tool names are resolved to the minimal covering set of
+#     TOOLSETS, which is passed to the child agent builder.
+#   - `tools.delegate_tool` intersects that with the parent's own toolsets, so
+#     the child can never gain a tool the parent lacks: child ⊆ parent.
+#   - Every tool you list is available to the child.
+#
+# What it does NOT guarantee: exact per-tool gating. The child may also receive
+# sibling tools from the same toolset, because the child-construction boundary
+# takes toolset names, not tool names. Treat `tools:` as "narrow the child to
+# roughly this area", not as a security boundary. The real security boundary
+# for side-effecting tools is still the gate (F3) — see the trading examples.
+#
+# Unknown tool names are REJECTED at compile time (code TOOLS_UNKNOWN).
+# `deny_tools:` is still not enforced by any execution path and compiles to a
+# warning; it is not a restriction, so do not rely on it.
+#
+# `spec.max_turns` caps the child's iteration budget (max_iterations).
+# `spec.output` is a JSON Schema validated when the node succeeds; a mismatch
+# fails the node with code SCHEMA rather than passing malformed data
+# downstream — the cheap defense against an LLM that ignored your format.
+#
+# Validate: hermes workflow validate examples-phase3-tools.yaml
+workflow: phase3_tools_demo
+version: 1
+nodes:
+  - id: gather
+    kind: agent
+    spec:
+      prompt: "Find three recent sources about {{ input.topic }}."
+      # Narrow the child to research tools. A cheap model with no tool
+      # endpoint at all is exactly why this knob exists.
+      tools: [web_search, web_extract]
+      max_turns: 6
+      model: "anthropic/claude-haiku-4-5-20251001"
+
+  - id: extract
+    kind: agent
+    spec:
+      prompt: |
+        From these sources, extract the key claims:
+        {{ gather.output }}
+        Reply with JSON only: {"claims": [...], "confidence": 0.0-1.0}
+      tools: [read_file]
+      max_turns: 4
+      # Schema enforcement: a reply that is not an object with both keys fails
+      # this node (SCHEMA) instead of poisoning `publish` downstream.
+      output:
+        type: object
+        required: [claims, confidence]
+        properties:
+          claims:
+            type: array
+          confidence:
+            type: number
+
+  - id: publish
+    kind: script
+    run: workflow.examples.echo
+    input:
+      claims: "{{ extract.output.claims }}"
+      confidence: "{{ extract.output.confidence }}"
+
+edges:
+  - { from: gather, to: extract }
+  - { from: extract, to: publish }
+
+triggers:
+  - { kind: manual }

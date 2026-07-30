@@ -1,8 +1,9 @@
 """
-Conversation surface for the `workflow` package (Phase 2, default OFF).
+Conversation surface for the `workflow` package (Phase 2/3, default OFF).
 
-Two read/dispatch tools — `workflow_run` and `workflow_status` — let an agent
-start and inspect a code-defined workflow from chat. Both are gated by
+Three read/dispatch tools — `workflow_run`, `workflow_status`, and (Phase 3)
+`workflow_chain` — let an agent start, inspect, and sequence code-defined
+workflows from chat. All are gated by
 ``check_workflow_tool_requirements`` on ``workflow.tool_enabled`` AND
 ``workflow.enabled`` in config.yaml, so they are absent from the schema unless
 the operator has opted in twice. The gate is a ``check_fn``, which the registry
@@ -13,6 +14,11 @@ thrash).
 Deliberately NOT exposed: gate decisions. An agent that can approve its own
 gates is not a gate — approvals stay on `hermes workflow gate` and the
 human-authenticated surfaces.
+
+Also deliberately NOT exposed: a blocking `watch`. Polling until a run reaches
+a terminal state is an operator affordance (`hermes workflow watch`), not a
+chat one — a tool call that blocks for minutes burns the turn and tells the
+model nothing it cannot get by calling `workflow_status` again later.
 """
 
 import json
@@ -104,6 +110,53 @@ WORKFLOW_STATUS_SCHEMA = {
             "limit": {"type": "integer", "description": "For action='list': max rows (default 20)."},
         },
         "required": [],
+    },
+}
+
+
+WORKFLOW_CHAIN_SCHEMA = {
+    "name": "workflow_chain",
+    "description": (
+        "Start a new workflow run whose input is derived from a FINISHED run's "
+        "final envelope (trigger-chaining: run B consumes run A's result). "
+        "Costs real tokens — the new run's agent nodes spawn child agents. "
+        "Use dry_run to see the plan without spawning. Refuses to chain off a "
+        "run that is still in progress or parked at a gate, because that "
+        "snapshot is not final yet."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "source_run_id": {
+                "type": "string",
+                "description": "run_id of the FINISHED run to take input from.",
+            },
+            "path": {
+                "type": "string",
+                "description": "Path to the target workflow YAML/JSON definition to start.",
+            },
+            "select": {
+                "type": "string",
+                "description": (
+                    "Dotted path into the source run's final envelope to pass along "
+                    "(e.g. 'succeeded' or 'cost_usd'). Omit to pass the whole envelope. "
+                    "A path that does not resolve passes null rather than failing."
+                ),
+            },
+            "as_key": {
+                "type": "string",
+                "description": "Input key to bind the selected value to (default 'from_run').",
+            },
+            "input": {
+                "type": "object",
+                "description": "Extra input keys, merged last (they win on collision).",
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": "Compile + report the ready set WITHOUT spawning. Costs nothing.",
+            },
+        },
+        "required": ["source_run_id", "path"],
     },
 }
 
@@ -201,6 +254,72 @@ def workflow_status(
         return _err(f"could not read run {run_id}: {e}")
 
 
+def workflow_chain(
+    source_run_id: Optional[str] = None,
+    path: Optional[str] = None,
+    select: Optional[str] = None,
+    as_key: str = "from_run",
+    input: Optional[Dict[str, Any]] = None,  # noqa: A002 - matches the IR's field name
+    dry_run: bool = False,
+) -> str:
+    """Start a run whose input is derived from a finished run. Returns JSON."""
+    if not check_workflow_tool_requirements():
+        return _err(
+            "workflow tools are disabled. Set workflow.enabled: true and "
+            "workflow.tool_enabled: true in config.yaml."
+        )
+    if not source_run_id or not path:
+        return _err("workflow_chain requires both 'source_run_id' and 'path'.")
+
+    try:
+        import workflow as wf
+        from workflow.chain import ChainSourceNotTerminal, resolve_chain_input
+    except Exception as e:  # noqa: BLE001
+        return _err(f"workflow package unavailable: {e}")
+
+    try:
+        # allow_incomplete is deliberately NOT exposed to the model. Overriding
+        # the terminal-status guard is an operator decision made with the run
+        # in front of them (`hermes workflow chain --allow-incomplete`); an
+        # agent doing it from chat would be freezing a snapshot the source run
+        # itself still considers unfinished.
+        chained_input = resolve_chain_input(
+            source_run_id,
+            select=select,
+            as_key=as_key or "from_run",
+            extra_input=dict(input or {}),
+        )
+    except ChainSourceNotTerminal as e:
+        return _err(
+            f"{e} Wait for it to finish (workflow_status(action='get', "
+            f"run_id='{source_run_id}')), then chain."
+        )
+    except FileNotFoundError:
+        return _err(f"no run {source_run_id}")
+    except Exception as e:  # noqa: BLE001
+        return _err(f"could not build chained input from {source_run_id}: {e}")
+
+    try:
+        env = wf.run(path, input=chained_input, dry_run=bool(dry_run))
+    except PermissionError as e:
+        return _err(str(e))
+    except FileNotFoundError as e:
+        return _err(f"not found: {e}")
+    except Exception as e:  # noqa: BLE001
+        return _err(f"chained workflow run failed: {e}")
+
+    if isinstance(env, dict):
+        env = dict(env)
+        env["chained_from"] = source_run_id
+        if env.get("status") == "awaiting_gate":
+            env["note"] = (
+                "This run is parked awaiting HUMAN approval. It cannot be advanced "
+                "from chat — a person must run: hermes workflow gate "
+                f"{env.get('run_id')} {env.get('awaiting_gate')} --decide approve"
+            )
+    return json.dumps(env, indent=2, default=str)
+
+
 # --- Registry ---
 # The `workflow` toolset is in no default bundle in toolsets.py; combined with
 # the check_fn above, the tools stay out of every schema until the operator
@@ -236,4 +355,20 @@ registry.register(
     ),
     check_fn=check_workflow_tool_requirements,
     emoji="🔎",
+)
+
+registry.register(
+    name="workflow_chain",
+    toolset="workflow",
+    schema=WORKFLOW_CHAIN_SCHEMA,
+    handler=lambda args, **kw: workflow_chain(
+        source_run_id=args.get("source_run_id"),
+        path=args.get("path"),
+        select=args.get("select"),
+        as_key=args.get("as_key", "from_run"),
+        input=args.get("input"),
+        dry_run=args.get("dry_run", False),
+    ),
+    check_fn=check_workflow_tool_requirements,
+    emoji="⛓️",
 )

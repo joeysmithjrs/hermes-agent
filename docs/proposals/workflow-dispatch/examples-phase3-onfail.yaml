@@ -1,0 +1,84 @@
+# Phase 3 example — `on_fail` failure policies + `first_k` short-circuit.
+#
+# on_fail decides what a FAILED node does to the rest of the run:
+#
+#   skip_downstream  DEFAULT (and the Phase 1/2 behavior). Everything
+#                    downstream cascades to `skipped` with a recorded reason;
+#                    unrelated branches keep running; the run ends partial.
+#   continue         The failure does not block downstream — the edge counts as
+#                    satisfied. Downstream sees NO output for the failed node
+#                    (it never succeeded), so only use it where the downstream
+#                    node genuinely tolerates a missing input.
+#   retry            Re-run up to `attempts` times (default 2 total), then fall
+#                    back to skip_downstream. REJECTED at compile time on a
+#                    node with `side_effects: external` — silently re-running a
+#                    side effect is the exact F6 footgun.
+#   fail_run         Hard stop: abort the run immediately, nothing further is
+#                    dispatched, terminal status is `failed` (not `partial`,
+#                    even if other nodes had already succeeded).
+#
+# Omitting on_fail entirely preserves pre-Phase-3 behavior exactly.
+#
+# Validate: hermes workflow validate examples-phase3-onfail.yaml
+workflow: phase3_onfail_demo
+version: 1
+nodes:
+  - id: seed
+    kind: script
+    run: workflow.examples.echo
+    input:
+      sources: ["feed-1", "feed-2", "feed-3", "feed-4", "feed-5"]
+
+  # A flaky network-ish fetch: worth retrying, but bounded.
+  - id: fetch
+    kind: agent
+    on_fail: retry
+    attempts: 3
+    spec:
+      prompt: "Fetch the latest headline for {{ input.ticker }}."
+
+  # Enrichment is a nice-to-have. If it fails the desk note is still worth
+  # writing, so the failure must NOT cascade.
+  - id: enrich
+    kind: agent
+    on_fail: continue
+    spec:
+      prompt: "Add analyst context to: {{ fetch.output }}"
+
+  # First 2 usable summaries are enough — short_circuit skips the branches that
+  # have not STARTED yet. Cancellation is cooperative: a branch already in
+  # flight runs to completion, it is not killed.
+  - id: summarize
+    kind: map
+    over: "{{ seed.output.echo.sources }}"
+    max_branches: 5
+    reduce:
+      type: first_k
+      k: 2
+      short_circuit: true
+    branch:
+      kind: agent
+      spec:
+        prompt: "Summarize {{ branch }} in one line."
+
+  # The final write-up is the point of the run. If it fails there is nothing
+  # left worth doing, so stop the whole run rather than reporting `partial`.
+  - id: desk_note
+    kind: agent
+    on_fail: fail_run
+    spec:
+      prompt: |
+        Write the desk note from:
+        fetch: {{ fetch.output }}
+        enrich: {{ enrich.output }}
+        summaries: {{ summarize.output }}
+
+edges:
+  - { from: seed, to: summarize }
+  - { from: seed, to: fetch }
+  - { from: fetch, to: enrich }
+  - { from: enrich, to: desk_note }
+  - { from: summarize, to: desk_note }
+
+triggers:
+  - { kind: manual }

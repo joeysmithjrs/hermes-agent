@@ -1,19 +1,23 @@
 """Phase 2 verifier regression coverage — acceptance checklist §"verify".
 
-`tests/workflow/test_verify.py` already covers the headline Phase 2 verifier
-cases (model+provider together accepted; tools/profile/max_turns/workspace
-still rejected/warn-only; F8/F4 security invariants). This file adds the
-angles that file does NOT cover, so it complements rather than duplicates it:
+`tests/workflow/test_verify.py` already covers the headline verifier cases
+(model+provider together accepted since Phase 2; tools/max_turns accepted
+since Phase 3; profile/workspace still rejected/warn-only; F8/F4 security
+invariants). This file adds the angles that file does NOT cover, so it
+complements rather than duplicates it:
   1. `spec.model` alone and `spec.provider` alone (not just both together)
      are each independently accepted with zero issues.
   2. The updated PHASE1_OVERRIDE rejection message text itself (not just the
      issue code) -- it must not claim an isolation boundary Phase 2 doesn't
      enforce, and must name spec.model/spec.provider as the honored fields.
-  3. A fanout branch that mixes an ALLOWED field (model) with a REJECTED
-     field (tools) in the same spec: exactly one PHASE1_OVERRIDE issue (for
-     tools), none for model -- proves the branch-template re-check applies
-     the *same* per-field carve-out as a top-level node, not a coarser
-     all-or-nothing rule.
+  3. A fanout branch that mixes an ALLOWED field (model) with a still-
+     REJECTED field (profile) in the same spec: exactly one PHASE1_OVERRIDE
+     issue (for profile), none for model -- proves the branch-template
+     re-check applies the *same* per-field carve-out as a top-level node, not
+     a coarser all-or-nothing rule. (Phase 3 note: this used to use `tools:`
+     as the still-rejected field; tools is now honored -- see
+     ir.PHASE3_OVERRIDE_FIELDS -- so `profile` demonstrates it instead. A
+     companion case shows model+tools+max_turns all coexisting cleanly.)
   4. The Phase 2 example fixture (`examples-phase2-live.yaml`) compiles /
      validates clean.
   5. A combined regression guard: a node that sets spec.model/spec.provider
@@ -120,7 +124,13 @@ triggers:
 # ---------------------------------------------------------------------------
 
 
-def test_branch_model_allowed_tools_rejected_same_spec(wf_home):
+def test_branch_model_allowed_profile_rejected_same_spec(wf_home):
+    """Phase 3 note: this used to use `tools:` as the still-rejected field
+    alongside the allowed `model:`. tools is now genuinely honored by the
+    LiveWorker (ir.PHASE3_OVERRIDE_FIELDS) and was removed from
+    OVERRIDE_ONLY_FIELDS, so it can no longer demonstrate a per-field reject.
+    `profile` still can -- see test_branch_model_tools_max_turns_all_honored_
+    same_spec below for the positive-only counterpart."""
     yaml_text = """
 workflow: branch_mixed
 version: 1
@@ -138,7 +148,7 @@ nodes:
       spec:
         prompt: "do {{ branch }}"
         model: fake/model-1
-        tools: [web_search]
+        profile: trader
   - id: jn
     kind: join
     from: [fan]
@@ -153,8 +163,47 @@ triggers:
         _verify(yaml_text, warn=False)
     override_issues = [i for i in exc.value.issues if i.code == "PHASE1_OVERRIDE"]
     assert len(override_issues) == 1, exc.value.issues
-    assert "tools" in override_issues[0].message, override_issues[0].message
+    assert "profile" in override_issues[0].message, override_issues[0].message
     assert "model" not in override_issues[0].message.split("'")[1], override_issues[0].message
+
+
+def test_branch_model_tools_max_turns_all_honored_same_spec(wf_home):
+    """Positive counterpart to test_branch_model_allowed_profile_rejected_
+    same_spec: within one fanout.branch.spec, model (Phase 2) plus tools and
+    max_turns (Phase 3) all coexist with zero issues in strict mode -- none
+    of the honored-field carve-outs are mutually exclusive."""
+    yaml_text = """
+workflow: branch_all_honored
+version: 1
+nodes:
+  - id: seed
+    kind: script
+    run: workflow.examples.echo
+    input: {items: [a, b]}
+  - id: fan
+    kind: fanout
+    over: "{{ seed.output.echo.items }}"
+    max_branches: 5
+    branch:
+      kind: agent
+      spec:
+        prompt: "do {{ branch }}"
+        model: fake/model-1
+        provider: fake-provider
+        tools: [web_search]
+        max_turns: 4
+  - id: jn
+    kind: join
+    from: [fan]
+    reduce: { type: concat }
+edges:
+  - { from: seed, to: fan }
+  - { from: fan, to: jn }
+triggers:
+  - { kind: manual }
+"""
+    vir = _verify(yaml_text, warn=False)
+    assert vir.issues == [], vir.issues
 
 
 # ---------------------------------------------------------------------------
