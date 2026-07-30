@@ -24,6 +24,7 @@ __all__ = [
     "top_k",
     "first_k",
     "majority",
+    "judge_converge",
     "best",
     "frozen",
 ]
@@ -161,6 +162,46 @@ def majority(envelopes: List[Dict[str, Any]], key: Optional[str] = None) -> Dict
     }
 
 
+def judge_converge(
+    envelopes: List[Dict[str, Any]],
+    judgment: Any = None,
+    key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Fold a judge agent's ruling together with the arguments it ruled on
+    (post-Phase-3 §3, the `judge_escalate` debate protocol).
+
+    This is a REDUCER, not the judge: the judge is an ordinary agent child the
+    driver runs through the same worker as any other node, and its output
+    arrives here as ``judgment``. Keeping the fold pure is what makes the
+    escalation auditable — the record shows every candidate that was on the
+    table alongside the ruling that picked among them.
+
+    ``majority`` already covers the plain `vote` protocol (canonicalized
+    voting, documented tie-break), so nothing here re-implements counting; the
+    tally is delegated to it verbatim and reported next to the ruling, letting
+    a reader see whether the judge went with or against the room.
+    """
+    tally = majority(envelopes, key=key)
+    candidates = []
+    for env in envelopes:
+        out = env.get("output") if isinstance(env, dict) else env
+        candidates.append(
+            {
+                "node_run_id": env.get("node_run_id") if isinstance(env, dict) else None,
+                "output": out,
+            }
+        )
+    return {
+        "kind": "judge_converge",
+        "judgment": judgment,
+        "judged": judgment is not None,
+        "candidates": candidates,
+        "tally": tally.get("tally", []),
+        "majority_winner": tally.get("winner"),
+        "tie": tally.get("tie", False),
+    }
+
+
 def best(envelopes: List[Dict[str, Any]], key: str = "score") -> Dict[str, Any]:
     """Select the single highest-scoring branch by ``out[key]``. A missing or
     non-numeric score counts as 0.0. Ties resolve to first appearance (a
@@ -211,6 +252,7 @@ register("concat", concat)
 register("top_k", top_k)
 register("first_k", first_k)
 register("majority", majority)
+register("judge_converge", judge_converge)
 register("best", best)
 register("workflow.examples.notify_telegram", _notify_telegram)
 register("workflow.examples.echo", _echo)

@@ -31,6 +31,10 @@ __all__ = [
     "ON_FAIL_POLICIES",
     "DEFAULT_ON_FAIL",
     "REDUCE_TYPES",
+    "DEBATE_PROTOCOLS",
+    "ADVISORY_POLICIES",
+    "CHILD_NODE_KINDS",
+    "debate_participant_templates",
 ]
 
 # design §2.2 — only justified kinds
@@ -41,9 +45,37 @@ NODE_KINDS = (
     "join",
     "gate",
     "map",
+    "debate",
+    "supervisor",
     "cron_trigger",
     "webhook_trigger",
 )
+
+# Post-Phase-3 §3 — convergence protocols for a `debate` node.
+#   vote            each round is tallied with the existing `majority` reducer
+#                   (runtime/scripts.py); a clean majority stops the debate early.
+#   judge_escalate  same rounds, but if the final round has no clean majority a
+#                   judge agent reads the whole history and picks (reducer
+#                   `judge_converge`).
+#   continue        no convergence requirement; run every round and concatenate.
+DEBATE_PROTOCOLS = ("vote", "judge_escalate", "continue")
+
+# Post-Phase-3 §4 — when a `supervisor` node may spend its advisor budget.
+#   ask_on_uncertain  ask only when the supervisor's own output asks, by
+#                     returning `request_advisory: true`. A cheap supervisor
+#                     handles the easy cases; only the hard ones cost advisor
+#                     money. (One documented signal, not an invented confidence
+#                     type the author would have to guess at.)
+#   always_ask        consult the advisor every round, up to the caps.
+#   budget            spend the whole advisor budget deliberately, then decide.
+#   never_ask         supervisor only; no advisor is constructed at all.
+ADVISORY_POLICIES = ("ask_on_uncertain", "always_ask", "budget", "never_ask")
+
+# A debate/supervisor node's children are always plain agents. Nesting a
+# debate inside a debate (or a supervisor inside either) is rejected at compile
+# time: it is the one shape that turns a bounded, auditable primitive into
+# unbounded recursive spend.
+CHILD_NODE_KINDS = ("agent",)
 
 # design §2.5 — run-level status enum (F7: includes awaiting_gate + paused)
 RUN_STATUSES = (
@@ -174,6 +206,34 @@ class Node:
     # DEFAULT_ON_FAIL, i.e. the Phase 1/2 skip-downstream cascade, so every
     # pre-Phase-3 workflow keeps exactly its old behavior.
     on_fail: Optional[str] = None
+    # Post-Phase-3 §3 — `debate` node fields.
+    #   directive:    {topic, objective?, threshold?, vote_key?, judge?, judge_model?}
+    #   max_rounds:   hard round cap (>= 1). A debate always terminates.
+    #   protocol:     see DEBATE_PROTOCOLS.
+    #   participants: int (clone `branch` N times) or a list of node templates.
+    directive: Optional[Dict[str, Any]] = None
+    max_rounds: Optional[int] = None
+    protocol: Optional[str] = None
+    participants: Optional[Any] = None
+    # Post-Phase-3 §4 — `supervisor` node fields. The node's OWN spec describes
+    # the supervisor agent (prompt, tools, ...); these add the advisory layer.
+    #   supervisor_model:     model for the supervisor's own turns (a cheap one
+    #                         is the point) unless spec.model already says.
+    #   advisor:              agent node template consulted per advisory_policy.
+    #   advisor_model/_provider: overrides for that advisor child.
+    #   advisory_policy:      see ADVISORY_POLICIES.
+    #   budget:               HARD cap on advisor calls for this node.
+    #   max_advisory_rounds:  round cap (defaults to `budget`).
+    #   advisory_context:     visible, audited text prepended to both sides'
+    #                         turn context — never a hidden injection.
+    supervisor_model: Optional[str] = None
+    advisor: Optional[Dict[str, Any]] = None
+    advisor_model: Optional[str] = None
+    advisor_provider: Optional[str] = None
+    advisory_policy: Optional[str] = None
+    budget: Optional[int] = None
+    max_advisory_rounds: Optional[int] = None
+    advisory_context: Optional[str] = None
 
     @property
     def fail_policy(self) -> str:
@@ -197,6 +257,18 @@ class Node:
             idempotent=d.get("idempotent"),
             side_effects=d.get("side_effects"),
             on_fail=d.get("on_fail"),
+            directive=d.get("directive"),
+            max_rounds=d.get("max_rounds"),
+            protocol=d.get("protocol"),
+            participants=d.get("participants"),
+            supervisor_model=d.get("supervisor_model"),
+            advisor=d.get("advisor"),
+            advisor_model=d.get("advisor_model"),
+            advisor_provider=d.get("advisor_provider"),
+            advisory_policy=d.get("advisory_policy"),
+            budget=d.get("budget"),
+            max_advisory_rounds=d.get("max_advisory_rounds"),
+            advisory_context=d.get("advisory_context"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -215,8 +287,46 @@ class Node:
             "idempotent": self.idempotent,
             "side_effects": self.side_effects,
             "on_fail": self.on_fail,
+            "directive": self.directive,
+            "max_rounds": self.max_rounds,
+            "protocol": self.protocol,
+            "participants": self.participants,
+            "supervisor_model": self.supervisor_model,
+            "advisor": self.advisor,
+            "advisor_model": self.advisor_model,
+            "advisor_provider": self.advisor_provider,
+            "advisory_policy": self.advisory_policy,
+            "budget": self.budget,
+            "max_advisory_rounds": self.max_advisory_rounds,
+            "advisory_context": self.advisory_context,
         }
         return {k: v for k, v in d.items() if v not in (None, [], {}) or k in ("id", "kind")}
+
+
+def debate_participant_templates(n: "Node") -> Optional[List[Dict[str, Any]]]:
+    """Normalize a debate node's ``participants:`` into a list of node
+    templates, or None when the declaration is unusable.
+
+    Lives here, next to the IR it reads, because BOTH the verifier and the
+    driver have to answer "which children will this debate actually run?" and
+    they must never answer it differently — a verifier that counts three
+    participants while the driver runs two is exactly the kind of drift that
+    turns a compile-time guarantee into a decoration.
+
+    Two accepted forms:
+      ``participants: 3``      clone the node's ``branch:`` template 3 times.
+      ``participants: [ {...}, {...} ]``  distinct per-participant templates.
+    """
+    participants = n.participants
+    if isinstance(participants, bool):
+        return None
+    if isinstance(participants, int):
+        if not n.branch or participants < 1:
+            return None
+        return [dict(n.branch) for _ in range(participants)]
+    if isinstance(participants, list):
+        return list(participants)
+    return None
 
 
 @dataclass
@@ -322,6 +432,11 @@ class WorkflowIR:
     gates: Dict[str, Gate] = field(default_factory=dict)
     max_budget_usd: Optional[float] = None
     notify: Optional[Dict[str, Any]] = None
+    # Post-Phase-3: name of the persistent workspace this workflow's nodes
+    # share (workflow.store.workspace). None = no workspace; nodes then have no
+    # `{{ workspace.* }}` root at all (the verifier rejects references to it),
+    # so every pre-workspace workflow behaves exactly as before.
+    workspace: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "WorkflowIR":
@@ -342,6 +457,7 @@ class WorkflowIR:
             gates=gates,
             max_budget_usd=d.get("max_budget_usd"),
             notify=d.get("notify"),
+            workspace=d.get("workspace"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -357,6 +473,7 @@ class WorkflowIR:
             "gates": {gid: g.to_dict() for gid, g in self.gates.items()},
             "max_budget_usd": self.max_budget_usd,
             "notify": self.notify,
+            "workspace": self.workspace,
         }
 
     def content_hash(self) -> str:

@@ -17,6 +17,9 @@ Hermes-native **code-defined multi-agent workflow** design for `joeysmithjrs/her
 | [CC_LAUNCH](./CC_LAUNCH.md) | How to spawn the multi-model swarm |
 | [CC_PROMPT_SHORT](./CC_PROMPT_SHORT.md) | Compact `-p` seed |
 | [minimal_workflow.py](./minimal_workflow.py) · [minimal_workflow.yaml](./minimal_workflow.yaml) | Sketches |
+| [PHASE3_SURFACES](./PHASE3_SURFACES.md) | Phase 3 operator surfaces — watch/cost/chain/schedule |
+| [POST_PHASE3_SPEC](./POST_PHASE3_SPEC.md) | Post-Phase-3 architecture — workspace, catalog, library, debate, supervisor, loop-back |
+| [POST_PHASE3_SURFACES](./POST_PHASE3_SURFACES.md) | Post-Phase-3 user-facing surfaces + `examples-post-phase3-*` |
 | [SUMMARY](./SUMMARY.md) | Status package |
 
 ## One-liner

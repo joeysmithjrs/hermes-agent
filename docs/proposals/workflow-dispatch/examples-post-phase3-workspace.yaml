@@ -1,0 +1,58 @@
+# Post-Phase-3 example — named persistent `workspace:` + the prompt `library:`.
+#
+# A workspace is an ACTIVE (read+write) directory the workflow's agents share,
+# at $HERMES_HOME/workflows/workspaces/<name>/:
+#
+#   workflows/workspaces/desk-autonomy/
+#       seed.md                  <- persists ACROSS runs (author- or agent-written)
+#       protocol_state.yaml      <- persists ACROSS runs
+#       runs/<run_id>/           <- this run's private corner
+#
+# It is deliberately not the run artifact store: `workflows/runs/<run_id>/` is
+# the AUDIT record (written by the driver, read-only to agents), while a
+# workspace is where agents are expected to write and where what they write is
+# expected to change. Cross-run seeding is the point -- a run leaves a file
+# behind instead of threading prompt text through the CLI.
+#
+# Prompt-caching safety: the ctx exposes workspace PATHS and NAMES only, never
+# file bodies. Agents read the files with their ordinary file tools at run
+# time, so a workspace file changing between runs cannot perturb a cached
+# prompt prefix.
+#
+# `{{ workspace.* }}` is rejected at compile time unless the workflow declares
+# a `workspace:` -- there would be no such ctx root at run time.
+#   workspace.name | .dir | .run_dir | .run_id | .files | .previous_runs
+#
+# Validate:  hermes workflow validate examples-post-phase3-workspace.yaml
+# Fake run:  HERMES_WORKFLOW_FAKE=1 hermes workflow run examples-post-phase3-workspace.yaml
+workflow: post_phase3_workspace_demo
+version: 1
+workspace: desk-autonomy
+nodes:
+  - id: review_history
+    kind: agent
+    spec:
+      # A reusable prompt body loaded from the library (post-Phase-3 §2).
+      # `library:`, NOT `template:` -- "template" already means expr.py's
+      # `{{ node.output.field }}` interpolation in this codebase.
+      prompt:
+        library: workspace-review-v1
+        params:
+          workspace_dir: "{{ workspace.dir }}"
+          previous_runs: "{{ workspace.previous_runs }}"
+
+  - id: update_state
+    kind: agent
+    spec:
+      prompt: |
+        Write this run's findings to {{ workspace.run_dir }}/findings.md, then
+        update the living document {{ workspace.dir }}/protocol_state.yaml so the
+        NEXT run starts where this one stopped.
+        Files currently at the workspace top level: {{ workspace.files }}
+        Findings to record: {{ review_history.output.text }}
+
+edges:
+  - { from: review_history, to: update_state }
+
+triggers:
+  - { kind: manual }

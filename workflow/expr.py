@@ -15,11 +15,20 @@ import json
 import re
 from typing import Any, Dict, Optional
 
-__all__ = ["render", "resolve_path", "eval_condition", "validate_condition_syntax", "TemplateError"]
+__all__ = [
+    "render",
+    "render_params",
+    "resolve_path",
+    "eval_condition",
+    "validate_condition_syntax",
+    "TemplateError",
+]
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*(.*?)\s*\}\}")
 # roots that are NOT subject to the bare node.field -> node.output.field shorthand
-_BARE_ROOTS = ("input", "branch", "run")
+# (`workspace` is the post-Phase-3 named-workspace block: paths/names, never a
+# node envelope, so the `.output` shorthand must not apply to it either)
+_BARE_ROOTS = ("input", "branch", "run", "workspace")
 
 # Shared by eval_condition (runtime) and validate_condition_syntax (compile-time,
 # workflow/verify.py) — one regex, not two, so the two can't drift apart.
@@ -94,6 +103,42 @@ def render(template: Any, ctx: Dict[str, Any]) -> Any:
         return str(val)
 
     return _TEMPLATE_RE.sub(sub, template)
+
+
+_PARAMS_RE = re.compile(r"\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+
+
+def render_params(text: str, params: Optional[Dict[str, Any]]) -> str:
+    """Substitute ``{{ params.<key> }}`` placeholders and NOTHING else.
+
+    This is the load-time half of the two-stage rendering both the catalog
+    (``store/catalog.py``) and the prompt library (``prompts/library.py``) use:
+    a recipe/prompt body is parameterized at LOAD time by its author-supplied
+    params, then the ordinary ``render()`` resolves ``{{ node.output.field }}``
+    against live run data later. Touching only the ``params`` root is what
+    keeps the two stages from stepping on each other.
+
+    A placeholder with no matching param raises ``TemplateError`` rather than
+    rendering an empty string — a prompt silently missing its directive is
+    worse than one that refuses to load.
+    """
+    params = params or {}
+
+    def sub(m: "re.Match[str]") -> str:
+        key = m.group(1)
+        if key not in params:
+            raise TemplateError(
+                f"template references {{{{ params.{key} }}}} but no '{key}' param was "
+                f"supplied (given: {sorted(params)})"
+            )
+        val = params[key]
+        if isinstance(val, bool):
+            return "true" if val else "false"
+        if isinstance(val, (dict, list)):
+            return json.dumps(val, default=str)
+        return str(val)
+
+    return _PARAMS_RE.sub(sub, text)
 
 
 def _dotted_root_present(field: str, output: Any) -> bool:

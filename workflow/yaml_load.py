@@ -56,6 +56,11 @@ def _from_yaml_mapping(raw: Dict[str, Any]) -> WorkflowIR:
         gates=gates,
         max_budget_usd=raw.get("max_budget_usd"),
         notify=raw.get("notify"),
+        # Top-level `workspace: <name>` pins the whole workflow to a named
+        # persistent workspace (workflow.store.workspace). Note this is the
+        # WORKFLOW-level key; the per-node `spec.workspace` mapping is a
+        # different, still-unenforced field (ir.OVERRIDE_ONLY_FIELDS).
+        workspace=raw.get("workspace"),
     )
 
 
@@ -94,6 +99,18 @@ def _node_from_yaml(d: Dict[str, Any]) -> Node:
         idempotent=d.get("idempotent"),
         side_effects=d.get("side_effects"),
         on_fail=d.get("on_fail"),
+        directive=d.get("directive"),
+        max_rounds=d.get("max_rounds"),
+        protocol=d.get("protocol"),
+        participants=d.get("participants"),
+        supervisor_model=d.get("supervisor_model"),
+        advisor=d.get("advisor"),
+        advisor_model=d.get("advisor_model"),
+        advisor_provider=d.get("advisor_provider"),
+        advisory_policy=d.get("advisory_policy"),
+        budget=d.get("budget"),
+        max_advisory_rounds=d.get("max_advisory_rounds"),
+        advisory_context=d.get("advisory_context"),
     )
 
 

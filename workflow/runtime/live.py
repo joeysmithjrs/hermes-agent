@@ -520,7 +520,16 @@ class LiveWorker:
         spec = node.spec
         prompt = spec.prompt if spec is not None else None
         goal = prompt if isinstance(prompt, str) else json.dumps(prompt)
-        context = json.dumps(ctx.get("input", {}))
+        # The child's context payload. When the workflow pins a named
+        # workspace, its PATHS travel here (never file bodies) so the child can
+        # read/write the shared directory with its ordinary file tools. Only
+        # added when a workspace exists, so a workflow without one produces the
+        # byte-identical context it produced before this feature.
+        context_payload: Any = ctx.get("input", {})
+        workspace_ctx = ctx.get("workspace")
+        if workspace_ctx:
+            context_payload = {"input": ctx.get("input", {}), "workspace": workspace_ctx}
+        context = json.dumps(context_payload, default=str)
 
         effective_model, effective_provider = resolve_effective_model(node, parent)
 

@@ -18,7 +18,9 @@ from typing import Any, Dict, Optional
 __all__ = [
     "select_path",
     "build_chain_input",
+    "build_lineage",
     "resolve_chain_input",
+    "resolve_chain",
     "ChainSourceNotTerminal",
     "DONE_STATUSES",
 ]
@@ -97,6 +99,66 @@ def build_chain_input(
     return derived
 
 
+def build_lineage(
+    source_envelope: Dict[str, Any],
+    *,
+    select: Optional[str] = None,
+    as_key: str = "from_run",
+) -> Dict[str, Any]:
+    """The lineage record a chained/looped-back run carries (pure; no I/O).
+
+    Post-Phase-3 §6: a backward route is a NEW run, never a graph cycle — the
+    graph stays acyclic, previous artifacts stay intact, checkpoint durability
+    is untouched. What a cycle WOULD have given for free is the answer to "how
+    did we get here", so the new run records it explicitly: source run, its
+    workflow and terminal status, and exactly which slice of its envelope was
+    fed forward. Without the `select`/`as` pair the lineage would say a run was
+    seeded from another without saying with what, which is the half of the
+    provenance a reader actually needs when the loop misbehaves.
+
+    Distinct from `build_chain_input`, which builds what the new run RECEIVES;
+    this is what the new run RECORDS.
+    """
+    return {
+        "run_id": source_envelope.get("run_id"),
+        "workflow_id": source_envelope.get("workflow_id"),
+        "status": source_envelope.get("status"),
+        "select": select,
+        "as": as_key or "from_run",
+    }
+
+
+def resolve_chain(
+    source_run_id: str,
+    *,
+    select: Optional[str] = None,
+    as_key: str = "from_run",
+    extra_input: Optional[Dict[str, Any]] = None,
+    allow_incomplete: bool = False,
+) -> Dict[str, Any]:
+    """Read SOURCE_RUN_ID once and return ``{"input": ..., "lineage": ...}``.
+
+    One read, both artifacts: `resolve_chain_input` reads the source envelope to
+    build the derived input, and the lineage has to describe that SAME envelope.
+    Reading twice would let a source run change status between the two (it can:
+    `--allow-incomplete` chains off a still-running run) and leave the recorded
+    lineage describing a state the input never came from.
+    """
+    from . import status as _status
+
+    src = _status(source_run_id)
+    if src.get("status") not in DONE_STATUSES and not allow_incomplete:
+        raise ChainSourceNotTerminal(
+            f"source run {source_run_id!r} is '{src.get('status')}', not one of "
+            f"{sorted(DONE_STATUSES)}. Pass --allow-incomplete to chain off it anyway."
+        )
+    return {
+        "input": build_chain_input(src, select=select, as_key=as_key, extra_input=extra_input),
+        "lineage": build_lineage(src, select=select, as_key=as_key),
+        "source": src,
+    }
+
+
 def resolve_chain_input(
     source_run_id: str,
     *,
@@ -112,13 +174,15 @@ def resolve_chain_input(
     half-finished run silently is a data-integrity trap, not a convenience.
     Raises ``FileNotFoundError`` (propagated from ``status()``) if the
     source run does not exist.
-    """
-    from . import status as _status
 
-    src = _status(source_run_id)
-    if src.get("status") not in DONE_STATUSES and not allow_incomplete:
-        raise ChainSourceNotTerminal(
-            f"source run {source_run_id!r} is '{src.get('status')}', not one of "
-            f"{sorted(DONE_STATUSES)}. Pass --allow-incomplete to chain off it anyway."
-        )
-    return build_chain_input(src, select=select, as_key=as_key, extra_input=extra_input)
+    Thin wrapper over ``resolve_chain`` (which also returns the lineage) so the
+    long-standing single-purpose entry point keeps its exact signature and
+    return shape.
+    """
+    return resolve_chain(
+        source_run_id,
+        select=select,
+        as_key=as_key,
+        extra_input=extra_input,
+        allow_incomplete=allow_incomplete,
+    )["input"]

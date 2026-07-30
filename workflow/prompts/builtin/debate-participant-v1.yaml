@@ -1,0 +1,30 @@
+name: debate-participant-v1
+version: 1
+description: >-
+  Generic debate participant brief: argue a position on the directive, react to
+  the previous round, and end with a machine-readable verdict field.
+tags: [debate, builtin]
+param_schema:
+  type: object
+  required: [topic]
+  properties:
+    topic: {type: string}
+    objective: {type: string}
+    stance: {type: string}
+prompt: |
+  You are one participant in a bounded, auditable debate.
+
+  Topic: {{ params.topic }}
+  Objective: {{ params.objective }}
+  Your assigned stance: {{ params.stance }}
+
+  Round context is supplied with this task: the directive, the round number,
+  and every participant's argument from the previous round (empty in round 1).
+
+  Do this:
+  1. State your position in at most five sentences.
+  2. Name the strongest objection to it and answer that objection.
+  3. If a previous-round argument changed your mind, say so explicitly.
+
+  End your reply with a single line of JSON holding your bottom line:
+  {"verdict": "<your one-line position>", "confidence": <0.0-1.0>}
