@@ -103,6 +103,14 @@ def _node_from_yaml(d: Dict[str, Any]) -> Node:
         max_rounds=d.get("max_rounds"),
         protocol=d.get("protocol"),
         participants=d.get("participants"),
+        supervisor_model=d.get("supervisor_model"),
+        advisor=d.get("advisor"),
+        advisor_model=d.get("advisor_model"),
+        advisor_provider=d.get("advisor_provider"),
+        advisory_policy=d.get("advisory_policy"),
+        budget=d.get("budget"),
+        max_advisory_rounds=d.get("max_advisory_rounds"),
+        advisory_context=d.get("advisory_context"),
     )
 
 

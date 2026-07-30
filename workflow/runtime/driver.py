@@ -116,19 +116,27 @@ def _new_node_run_id(run_id: str, node_id: str) -> str:
     return f"{run_id}__{node_id}__{uuid.uuid4().hex[:8]}"
 
 
-def _new_debate_node_run_id(run_id: str, node_id: str, round_no: int, agent_id: str) -> str:
-    """node_run_id for one debate participant's turn in one round
-    (post-Phase-3 §3): ``<run>__debate_<node>__round_<r>__agent_<id>__<uuid>``.
+def _new_child_node_run_id(run_id: str, kind: str, node_id: str, stage: str, agent_id: str) -> str:
+    """node_run_id for one turn inside a debate/supervisor node (post-Phase-3
+    §3/§4): ``<run>__<kind>_<node>__<stage>__agent_<id>__<uuid>`` — e.g.
+    ``wf_ab12__debate_desk__round_2__agent_hawk__1f0c9d3a`` or
+    ``wf_ab12__supervisor_desk__adv_1__agent_quant__9be21c04``.
 
     Deliberately NOT the fanout branch shape (``<node>#<i>``): a reader
     scanning ``runs/<run_id>/nodes/`` should be able to reconstruct who argued
-    what, in which round, without opening a single file — that audit trail is
-    most of what makes a debate reviewable rather than merely expensive. The
-    uuid4 tail is still there, because F1 ("one node_run_id per EXECUTION")
-    outranks readability: a retried turn must not overwrite the record of the
-    turn it replaces.
+    (or advised) what, and when, without opening a single file — that audit
+    trail is most of what makes these primitives reviewable rather than merely
+    expensive. The uuid4 tail is still there, because F1 ("one node_run_id per
+    EXECUTION") outranks readability: a retried turn must not overwrite the
+    record of the turn it replaces.
     """
-    return f"{run_id}__debate_{node_id}__round_{round_no}__agent_{agent_id}__{uuid.uuid4().hex[:8]}"
+    return f"{run_id}__{kind}_{node_id}__{stage}__agent_{agent_id}__{uuid.uuid4().hex[:8]}"
+
+
+# Node kinds whose CHILD node-runs (debate turns, supervisor/advisor turns) are
+# internal to one parent node-run: the parent's own status already accounts for
+# them, so upstream resolution must not re-judge the run on them individually.
+_INTERNAL_CHILD_KINDS = ("debate", "supervisor")
 
 
 def _validate_output_schema(spec_output: Dict[str, Any], output: Any) -> Optional[str]:
@@ -683,15 +691,17 @@ class Driver:
             up_kind = getattr(self.nodes.get(up), "kind", None)
             for nrid in runs:
                 child = self.state.node_runs[nrid]
-                if up_kind == "debate" and child.branch_index is not None:
-                    # A debate's per-round turns are INTERNAL to its single
-                    # node-run, whose own status already accounts for them: a
-                    # debate deliberately tolerates a failed participant and
-                    # converges on the arguments that survived. Letting one
-                    # failed turn skip a downstream join would override that
-                    # decision from the outside. (Fanout/map branches are NOT
-                    # given this carve-out -- there a failed branch genuinely
-                    # is a missing input to the reduction.)
+                if up_kind in _INTERNAL_CHILD_KINDS and child.branch_index is not None:
+                    # A debate's per-round turns (and a supervisor's advisory
+                    # turns) are INTERNAL to one node-run, whose own status
+                    # already accounts for them: a debate tolerates a failed
+                    # participant and converges on the arguments that survived;
+                    # a supervisor tolerates a failed advisor and answers
+                    # unadvised. Letting one failed turn skip a downstream join
+                    # would override that decision from the outside.
+                    # (Fanout/map branches are NOT given this carve-out -- there
+                    # a failed branch genuinely is a missing input to the
+                    # reduction.)
                     continue
                 st = child.status
                 if st == "failed":
@@ -778,11 +788,11 @@ class Driver:
             child = self.state.node_runs[nrid]
             if child.status == "succeeded":
                 continue
-            if upstream_kind == "debate" and child.branch_index is not None:
-                # Same carve-out as `_resolve_from_upstreams`: a debate's turns
-                # are internal to its own node-run. A failed turn must not wedge
-                # every downstream node `pending` for the rest of the run when
-                # the debate itself reached a verdict.
+            if upstream_kind in _INTERNAL_CHILD_KINDS and child.branch_index is not None:
+                # Same carve-out as `_resolve_from_upstreams`: these turns are
+                # internal to their parent's node-run. A failed turn must not
+                # wedge every downstream node `pending` for the rest of the run
+                # when the parent itself reached a verdict.
                 continue
             return "pending"
         if edge.condition is None:
@@ -862,6 +872,8 @@ class Driver:
                 self._run_fanout(nr, node)
             elif node.kind == "debate":
                 self._run_debate(nr, node)
+            elif node.kind == "supervisor":
+                self._run_supervisor(nr, node)
             elif node.kind == "join":
                 self._run_join(nr, node)
             elif node.kind == "gate":
@@ -877,9 +889,9 @@ class Driver:
     def _finish_top_level(self, nr: NodeRun, node: Node) -> None:
         nr.ended_at = _ts()
         with self._agg_lock:
-            if node.kind not in ("fanout", "map", "debate"):
-                # TASK 5: a fanout/map/debate node's own cost/tokens are a
-                # ROLLUP over its children, computed for display
+            if node.kind not in ("fanout", "map", "debate", "supervisor"):
+                # TASK 5: a fanout/map/debate/supervisor node's own cost/tokens
+                # are a ROLLUP over its children, computed for display
                 # (so `{{ mynode.output }}`'s envelope reports true subtree
                 # cost) -- NOT an additional contribution to the run-level
                 # total. Each branch already added its own cost/tokens
@@ -1507,38 +1519,38 @@ class Driver:
             child.spec = NodeSpec.from_dict(td.get("spec"))
         return child
 
-    def _debate_budget_stop(self) -> bool:
-        """Budget circuit-breaker, armed INSIDE the debate loop.
+    def _child_budget_stop(self) -> bool:
+        """Budget circuit-breaker, armed INSIDE a debate/supervisor loop.
 
-        A debate is ONE node-run that internally runs `participants x rounds`
-        billable agent turns, so -- exactly like the fanout/map branch loop
-        (review BLOCKER #1) -- checking the cap only around the node would let
-        a wide debate overshoot it by an arbitrary multiple. Checked before
-        every turn; a turn already dispatched still finishes.
+        These are ONE node-run that internally runs many billable agent turns,
+        so -- exactly like the fanout/map branch loop (review BLOCKER #1) --
+        checking the cap only around the node would let a wide debate (or a
+        long advisory chain) overshoot it by an arbitrary multiple. Checked
+        before every turn; a turn already dispatched still finishes.
         """
         self._check_budget()
         return self.state.status == "paused"
 
-    def _run_debate_turn(
+    def _run_child_turn(
         self,
         node: Node,
         child_node: Node,
-        round_no: int,
         item: Dict[str, Any],
         *,
+        stage: str,
         agent_label: Optional[str] = None,
     ) -> NodeRun:
-        """Run one participant's (or the judge's) turn as a child node-run.
+        """Run one turn of a debate/supervisor node as a child node-run.
 
         Reuses the fanout/map BRANCH machinery verbatim -- `_run_one_branch`
         gives checkpoint-before-dispatch, per-node_run_id output storage, cost/
-        token folding and `on_fail` dispatch, all of which a debate turn needs
-        for exactly the same reasons a branch does. What differs is only the
-        naming (see `_new_debate_node_run_id`) and the `branch` item the turn
-        argues from.
+        token folding and `on_fail` dispatch, all of which these turns need for
+        exactly the same reasons a branch does. What differs is only the naming
+        (see `_new_child_node_run_id`) and the `branch` item the turn works
+        from.
         """
         agent_id = agent_label or child_node.id
-        nrid = _new_debate_node_run_id(self.run_id, node.id, round_no, agent_id)
+        nrid = _new_child_node_run_id(self.run_id, node.kind, node.id, stage, agent_id)
         existing = self.state.node_runs_by_node.get(node.id, [])
         index = sum(1 for x in existing if self.state.node_runs[x].branch_index is not None)
         child_nr = NodeRun(
@@ -1550,7 +1562,7 @@ class Driver:
             branch_node=child_node,
             branch_item=item,
             parent_fanout=node.id,
-            display_id=f"{node.id}__round_{round_no}__{agent_id}",
+            display_id=f"{node.id}__{stage}__{agent_id}",
         )
         self.state.node_runs[nrid] = child_nr
         self.state.node_runs_by_node.setdefault(node.id, []).append(nrid)
@@ -1644,7 +1656,7 @@ class Driver:
             if self._aborted:
                 stopped_reason = "aborted"
                 break
-            if self._debate_budget_stop():
+            if self._child_budget_stop():
                 stopped_reason = "budget_exhausted"
                 break
             rounds_run = round_no
@@ -1656,14 +1668,13 @@ class Driver:
                     stopped_reason = "aborted"
                     interrupted = True
                     break
-                if self._debate_budget_stop():
+                if self._child_budget_stop():
                     stopped_reason = "budget_exhausted"
                     interrupted = True
                     break
-                turn = self._run_debate_turn(
+                turn = self._run_child_turn(
                     node,
                     participant,
-                    round_no,
                     {
                         "role": "participant",
                         "round": round_no,
@@ -1673,6 +1684,7 @@ class Driver:
                         "objective": directive.get("objective"),
                         "transcript": list(transcript),
                     },
+                    stage=f"round_{round_no}",
                 )
                 if turn.status == "succeeded":
                     round_envelopes.append(
@@ -1721,11 +1733,12 @@ class Driver:
             and isinstance(judge_tmpl, dict)
         ):
             judge_node = self._make_child_node(judge_tmpl, f"{node.id}_judge")
-            self._apply_judge_overrides(judge_node, directive)
-            judge_turn = self._run_debate_turn(
+            self._apply_child_overrides(
+                judge_node, directive.get("judge_model"), directive.get("judge_provider")
+            )
+            judge_turn = self._run_child_turn(
                 node,
                 judge_node,
-                rounds_run,
                 {
                     "role": "judge",
                     "round": rounds_run,
@@ -1735,6 +1748,7 @@ class Driver:
                     "transcript": list(transcript),
                     "candidates": [e.get("output") for e in final_envelopes],
                 },
+                stage=f"round_{rounds_run}",
                 agent_label="judge",
             )
             if judge_turn.status == "succeeded":
@@ -1802,27 +1816,224 @@ class Driver:
         nr.status = "succeeded"
 
     @staticmethod
-    def _apply_judge_overrides(judge_node: Node, directive: Dict[str, Any]) -> None:
-        """Apply `directive.judge_model`/`judge_provider` to the judge child,
-        without ever overriding what the judge template itself declares.
+    def _apply_child_overrides(
+        child_node: Node, model: Optional[str], provider: Optional[str]
+    ) -> None:
+        """Apply a parent's model/provider override (debate `judge_model`,
+        supervisor `supervisor_model`/`advisor_model`) to a child, WITHOUT ever
+        overriding what the child template itself declares -- the more specific
+        declaration wins, as everywhere else in the IR.
 
-        These two are honored precisely because the live worker honors
+        These are honored precisely because the live worker honors
         `spec.model`/`spec.provider` (Phase 2) -- which is also why the verifier
         rejects `judge_profile`: a profile name no execution path applies would
         be a routing promise nothing keeps.
         """
         from ..ir import NodeSpec
 
-        model = directive.get("judge_model")
-        provider = directive.get("judge_provider")
         if not model and not provider:
             return
-        if judge_node.spec is None:
-            judge_node.spec = NodeSpec()
-        if model and not judge_node.spec.model:
-            judge_node.spec.model = model
-        if provider and not judge_node.spec.provider:
-            judge_node.spec.provider = provider
+        if child_node.spec is None:
+            child_node.spec = NodeSpec()
+        if model and not child_node.spec.model:
+            child_node.spec.model = model
+        if provider and not child_node.spec.provider:
+            child_node.spec.provider = provider
+
+    # ---- post-Phase-3 §4: supervisor ---------------------------------------
+
+    @staticmethod
+    def _requests_advisory(output: Any) -> bool:
+        """Did the supervisor ask for help? ONE documented signal --
+        ``request_advisory: true`` in the supervisor's own output.
+
+        Deliberately not a confidence-score heuristic: a threshold the driver
+        invented would be a number no author wrote and no reader could predict,
+        and "the cheap model quietly decided this was hard" is the last place
+        to put magic. A supervisor that wants an advisor says so.
+        """
+        return bool(isinstance(output, dict) and output.get("request_advisory"))
+
+    def _run_supervisor(self, nr: NodeRun, node: Node) -> None:
+        """Run a supervisor node: its own agent first, then advisor
+        consultations per `advisory_policy`, then the supervisor's final turn
+        (post-Phase-3 §4).
+
+        The output of the NODE is the supervisor's final turn -- never the
+        advisor's. That is the whole shape of the primitive: a cheap model owns
+        the answer and may buy a second opinion, bounded by `budget` (a hard cap
+        on advisor calls) and `max_advisory_rounds`. Advisor turns are ordinary
+        child node-runs: same worker, same gate/side_effects rules, same audit
+        trail, their own cost lines.
+
+        Policies:
+          never_ask         one supervisor turn, no advisor is ever built.
+          ask_on_uncertain  consult only while the supervisor's own output says
+                            `request_advisory: true` (see `_requests_advisory`).
+          always_ask        consult every round up to the caps.
+          budget            spend the advisor budget deliberately, then answer.
+
+        The budget is a STOP, not a silent skip: when it runs out the loop ends
+        and `stopped_reason` records which cap ended it.
+        """
+        policy = node.advisory_policy or "never_ask"
+        budget = node.budget if isinstance(node.budget, int) and not isinstance(node.budget, bool) else 0
+        max_rounds = node.max_advisory_rounds
+        if not isinstance(max_rounds, int) or isinstance(max_rounds, bool) or max_rounds < 1:
+            max_rounds = budget
+        rounds_cap = min(budget, max_rounds) if policy != "never_ask" else 0
+
+        spec_dict = node.spec.to_dict() if node.spec else {}
+        supervisor_node = self._make_child_node(
+            {"id": f"{node.id}_supervisor", "kind": "agent", "spec": spec_dict},
+            f"{node.id}_supervisor",
+        )
+        self._apply_child_overrides(supervisor_node, node.supervisor_model, None)
+
+        advisory_context = node.advisory_context
+        advisory: List[Dict[str, Any]] = []
+        turn_no = 1
+        first = self._run_child_turn(
+            node,
+            supervisor_node,
+            {
+                "role": "supervisor",
+                "turn": turn_no,
+                "advisory_policy": policy,
+                "budget": budget,
+                "advisory_context": advisory_context,
+                "advice": [],
+            },
+            stage=f"turn_{turn_no}",
+            agent_label="supervisor",
+        )
+        if first.status != "succeeded":
+            nr.output = {
+                "kind": "supervisor",
+                "advisory_policy": policy,
+                "advisor_calls": 0,
+                "budget": budget,
+                "stopped_reason": "supervisor_failed",
+                "result": None,
+                "advisory": [],
+                "supervisor_node_run_id": first.node_run_id,
+            }
+            cost_sum, in_sum, out_sum = self._rollup_branch_cost(node.id)
+            nr.cost_usd, nr.tokens_in, nr.tokens_out = cost_sum, in_sum, out_sum
+            nr.status = "failed"
+            nr.error = {
+                "code": "SUPERVISOR",
+                "message": f"supervisor turn of '{node.id}' failed; no answer to advise on",
+                "retriable": True,
+            }
+            return
+
+        final = first
+        stopped_reason = "never_ask" if policy == "never_ask" else "no_request"
+        advisor_calls = 0
+
+        if policy != "never_ask" and isinstance(node.advisor, dict):
+            advisor_node = self._make_child_node(node.advisor, f"{node.id}_advisor")
+            self._apply_child_overrides(advisor_node, node.advisor_model, node.advisor_provider)
+            for adv_round in range(1, rounds_cap + 1):
+                if policy == "ask_on_uncertain" and not self._requests_advisory(final.output):
+                    stopped_reason = "no_request"
+                    break
+                if self._aborted:
+                    stopped_reason = "aborted"
+                    break
+                if self._child_budget_stop():
+                    stopped_reason = "budget_exhausted"
+                    break
+                # An advisory round is ATOMIC from here: advisor turn, then the
+                # supervisor's response to it. Bailing between the two would pay
+                # for advice nobody read and leave the node's answer stale, so
+                # the run-budget breaker is checked at the top of a round and
+                # bounds the overshoot to one round -- the same cooperative
+                # bound the fanout branch loop uses.
+                advisor_turn = self._run_child_turn(
+                    node,
+                    advisor_node,
+                    {
+                        "role": "advisor",
+                        "round": adv_round,
+                        "advisory_context": advisory_context,
+                        "question": final.output,
+                        "advice": [a["advice"] for a in advisory],
+                    },
+                    stage=f"adv_{adv_round}",
+                    agent_label="advisor",
+                )
+                advisor_calls += 1
+                if advisor_turn.status != "succeeded":
+                    # A failed advisor is not a failed supervision: the
+                    # supervisor already has an answer and keeps it. Recorded,
+                    # not swallowed -- the turn stays `failed` in the checkpoint.
+                    stopped_reason = "advisor_failed"
+                    advisory.append(
+                        {
+                            "round": adv_round,
+                            "advisor_node_run_id": advisor_turn.node_run_id,
+                            "advice": None,
+                            "failed": True,
+                        }
+                    )
+                    break
+                turn_no += 1
+                next_turn = self._run_child_turn(
+                    node,
+                    supervisor_node,
+                    {
+                        "role": "supervisor",
+                        "turn": turn_no,
+                        "advisory_policy": policy,
+                        "budget": budget,
+                        "advisory_context": advisory_context,
+                        "advice": [a["advice"] for a in advisory] + [advisor_turn.output],
+                    },
+                    stage=f"turn_{turn_no}",
+                    agent_label="supervisor",
+                )
+                advisory.append(
+                    {
+                        "round": adv_round,
+                        "advisor_node_run_id": advisor_turn.node_run_id,
+                        "advice": advisor_turn.output,
+                        "supervisor_node_run_id": next_turn.node_run_id,
+                        "failed": False,
+                    }
+                )
+                if next_turn.status != "succeeded":
+                    # keep the last good supervisor answer rather than
+                    # publishing a failed turn's empty output
+                    stopped_reason = "supervisor_turn_failed"
+                    break
+                final = next_turn
+                # Ran the cap out: name WHICH cap stopped it, since `budget`
+                # and `max_advisory_rounds` are separate knobs an operator
+                # tunes for different reasons.
+                stopped_reason = "budget" if budget <= (node.max_advisory_rounds or budget) else "max_advisory_rounds"
+
+        nr.output = {
+            "kind": "supervisor",
+            "advisory_policy": policy,
+            "advisor_calls": advisor_calls,
+            "budget": budget,
+            "max_advisory_rounds": rounds_cap,
+            "stopped_reason": stopped_reason,
+            "supervisor_turns": turn_no,
+            "supervisor_node_run_id": final.node_run_id,
+            "advisory_context": advisory_context,
+            "result": final.output,
+            "advisory": advisory,
+        }
+        # Subtree rollup for display only -- each turn already folded its own
+        # cost into the run total exactly once (see `_finish_top_level`).
+        cost_sum, in_sum, out_sum = self._rollup_branch_cost(node.id)
+        nr.cost_usd = cost_sum
+        nr.tokens_in = in_sum
+        nr.tokens_out = out_sum
+        nr.status = "succeeded"
 
     def _run_join(self, nr: NodeRun, node: Node) -> None:
         """Reduce upstream branch outputs via the shared reducer-dispatch

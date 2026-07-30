@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from .expr import TemplateError, validate_condition_syntax
 from .ir import (
+    ADVISORY_POLICIES,
     CHILD_NODE_KINDS,
     DEBATE_PROTOCOLS,
     Issue,
@@ -268,10 +269,13 @@ def _check_node(
             "node is not actually side-effecting",
         )
 
-    # agent must have a prompt (design §5 prompts)
-    if n.kind == "agent":
+    # agent must have a prompt (design §5 prompts). A `supervisor` node IS an
+    # agent node with an advisory layer bolted on -- its own spec runs as the
+    # supervisor's turns -- so it gets the identical prompt/F2/tools rules
+    # rather than a parallel, weaker set.
+    if n.kind in ("agent", "supervisor"):
         if not n.spec or n.spec.prompt is None or n.spec.prompt == "":
-            err("PROMPT", n.id, "agent node missing prompt")
+            err("PROMPT", n.id, f"{n.kind} node missing prompt")
         else:
             _check_prompt(n, ir, err)
         # F2: override-only fields no execution path honors yet. Phase 3
@@ -287,7 +291,7 @@ def _check_node(
                         warn(
                             "PHASE1_OVERRIDE",
                             n.id,
-                            f"agent node sets override-only field '{f}', which no execution "
+                            f"{n.kind} node sets override-only field '{f}', which no execution "
                             "path enforces yet (spec.model, spec.provider, spec.tools, and "
                             "spec.max_turns ARE honored; spec.profile and spec.workspace "
                             "are not)",
@@ -296,7 +300,7 @@ def _check_node(
                         err(
                             "PHASE1_OVERRIDE",
                             n.id,
-                            f"agent node sets override-only field '{f}'. spec.model, "
+                            f"{n.kind} node sets override-only field '{f}'. spec.model, "
                             "spec.provider, spec.tools, and spec.max_turns are honored by "
                             f"the live worker; '{f}' is still not enforced by any execution "
                             "path — remove it or set workflow.phase1_warn_overrides",
@@ -405,6 +409,10 @@ def _check_node(
     # debate: directive + bounded rounds + protocol + participants
     if n.kind == "debate":
         _check_debate(n, nodes, ir, phase1_warn_overrides, err, warn)
+
+    # supervisor: named policy + hard advisor budget + an actual advisor
+    if n.kind == "supervisor":
+        _check_supervisor(n, nodes, ir, phase1_warn_overrides, err, warn)
 
     # gate node must have a matching gates entry
     if n.kind == "gate":
@@ -551,6 +559,81 @@ def _check_debate(
         _validate_reduce_block(n, n.reduce, err, warn)
 
 
+def _check_supervisor(
+    n: Node,
+    nodes: Dict[str, Node],
+    ir: WorkflowIR,
+    phase1_warn_overrides: bool,
+    err,
+    warn,
+) -> None:
+    """Post-Phase-3 §4 supervisor rules.
+
+    The shape this enforces is "a cheap supervisor may consult an expensive
+    advisor, at most N times". Every one of those words is checked: a named
+    policy (spending on a second model is a decision, not a default), a HARD
+    integer budget (the cap exists to be the number an operator can point at),
+    and an advisor template that actually exists — the driver will not invent
+    an advisor prompt any more than it invents a judge's.
+    """
+    policy = n.advisory_policy
+    if policy is None:
+        err(
+            "SUPERVISOR",
+            n.id,
+            f"supervisor node missing required `advisory_policy` (one of: {', '.join(ADVISORY_POLICIES)})",
+        )
+    elif policy not in ADVISORY_POLICIES:
+        err(
+            "SUPERVISOR",
+            n.id,
+            f"unknown advisory_policy '{policy}' (expected one of: {', '.join(ADVISORY_POLICIES)})",
+        )
+
+    for f in ("supervisor_model", "advisor_model", "advisor_provider", "advisory_context"):
+        val = getattr(n, f, None)
+        if val is not None and not isinstance(val, str):
+            err("SUPERVISOR", n.id, f"supervisor `{f}` must be a string (got {type(val).__name__})")
+
+    for f in ("budget", "max_advisory_rounds"):
+        val = getattr(n, f, None)
+        if val is not None and (isinstance(val, bool) or not isinstance(val, int) or val < 1):
+            err("SUPERVISOR", n.id, f"supervisor `{f}` must be an int >= 1 (got {val!r})")
+
+    if policy == "never_ask":
+        if n.advisor is not None:
+            warn(
+                "SUPERVISOR",
+                n.id,
+                "advisory_policy: never_ask but an `advisor:` template is declared -- it will "
+                "never run; remove it or choose a policy that consults it",
+            )
+        return
+
+    if n.budget is None:
+        err(
+            "SUPERVISOR",
+            n.id,
+            "supervisor node missing required `budget` (the hard cap on advisor calls). "
+            "Every policy except never_ask can spend a second, usually pricier model -- "
+            "that ceiling is the author's to state, not the driver's to guess",
+        )
+
+    if n.advisor is None:
+        err(
+            "SUPERVISOR",
+            n.id,
+            f"advisory_policy: {policy} needs an `advisor:` agent node template -- the driver "
+            "will not invent an advisor prompt for a consultation the workflow asked for",
+        )
+    elif not isinstance(n.advisor, dict):
+        err("SUPERVISOR", n.id, "supervisor `advisor` must be a node template mapping")
+    else:
+        _check_child_templates(
+            n, [n.advisor], nodes, ir, phase1_warn_overrides, err, warn, label="advisor"
+        )
+
+
 def _child_templates_of(n: Node) -> List[Dict[str, Any]]:
     """Child node templates a debate/supervisor node will actually run.
 
@@ -566,6 +649,9 @@ def _child_templates_of(n: Node) -> List[Dict[str, Any]]:
         judge = (n.directive or {}).get("judge")
         if isinstance(judge, dict):
             out.append(judge)
+    elif n.kind == "supervisor":
+        if isinstance(n.advisor, dict) and n.advisory_policy != "never_ask":
+            out.append(n.advisor)
     return out
 
 

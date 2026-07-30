@@ -32,6 +32,7 @@ __all__ = [
     "DEFAULT_ON_FAIL",
     "REDUCE_TYPES",
     "DEBATE_PROTOCOLS",
+    "ADVISORY_POLICIES",
     "CHILD_NODE_KINDS",
     "debate_participant_templates",
 ]
@@ -45,6 +46,7 @@ NODE_KINDS = (
     "gate",
     "map",
     "debate",
+    "supervisor",
     "cron_trigger",
     "webhook_trigger",
 )
@@ -57,6 +59,17 @@ NODE_KINDS = (
 #                   `judge_converge`).
 #   continue        no convergence requirement; run every round and concatenate.
 DEBATE_PROTOCOLS = ("vote", "judge_escalate", "continue")
+
+# Post-Phase-3 §4 — when a `supervisor` node may spend its advisor budget.
+#   ask_on_uncertain  ask only when the supervisor's own output asks, by
+#                     returning `request_advisory: true`. A cheap supervisor
+#                     handles the easy cases; only the hard ones cost advisor
+#                     money. (One documented signal, not an invented confidence
+#                     type the author would have to guess at.)
+#   always_ask        consult the advisor every round, up to the caps.
+#   budget            spend the whole advisor budget deliberately, then decide.
+#   never_ask         supervisor only; no advisor is constructed at all.
+ADVISORY_POLICIES = ("ask_on_uncertain", "always_ask", "budget", "never_ask")
 
 # A debate/supervisor node's children are always plain agents. Nesting a
 # debate inside a debate (or a supervisor inside either) is rejected at compile
@@ -202,6 +215,25 @@ class Node:
     max_rounds: Optional[int] = None
     protocol: Optional[str] = None
     participants: Optional[Any] = None
+    # Post-Phase-3 §4 — `supervisor` node fields. The node's OWN spec describes
+    # the supervisor agent (prompt, tools, ...); these add the advisory layer.
+    #   supervisor_model:     model for the supervisor's own turns (a cheap one
+    #                         is the point) unless spec.model already says.
+    #   advisor:              agent node template consulted per advisory_policy.
+    #   advisor_model/_provider: overrides for that advisor child.
+    #   advisory_policy:      see ADVISORY_POLICIES.
+    #   budget:               HARD cap on advisor calls for this node.
+    #   max_advisory_rounds:  round cap (defaults to `budget`).
+    #   advisory_context:     visible, audited text prepended to both sides'
+    #                         turn context — never a hidden injection.
+    supervisor_model: Optional[str] = None
+    advisor: Optional[Dict[str, Any]] = None
+    advisor_model: Optional[str] = None
+    advisor_provider: Optional[str] = None
+    advisory_policy: Optional[str] = None
+    budget: Optional[int] = None
+    max_advisory_rounds: Optional[int] = None
+    advisory_context: Optional[str] = None
 
     @property
     def fail_policy(self) -> str:
@@ -229,6 +261,14 @@ class Node:
             max_rounds=d.get("max_rounds"),
             protocol=d.get("protocol"),
             participants=d.get("participants"),
+            supervisor_model=d.get("supervisor_model"),
+            advisor=d.get("advisor"),
+            advisor_model=d.get("advisor_model"),
+            advisor_provider=d.get("advisor_provider"),
+            advisory_policy=d.get("advisory_policy"),
+            budget=d.get("budget"),
+            max_advisory_rounds=d.get("max_advisory_rounds"),
+            advisory_context=d.get("advisory_context"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -251,6 +291,14 @@ class Node:
             "max_rounds": self.max_rounds,
             "protocol": self.protocol,
             "participants": self.participants,
+            "supervisor_model": self.supervisor_model,
+            "advisor": self.advisor,
+            "advisor_model": self.advisor_model,
+            "advisor_provider": self.advisor_provider,
+            "advisory_policy": self.advisory_policy,
+            "budget": self.budget,
+            "max_advisory_rounds": self.max_advisory_rounds,
+            "advisory_context": self.advisory_context,
         }
         return {k: v for k, v in d.items() if v not in (None, [], {}) or k in ("id", "kind")}
 
