@@ -57,21 +57,66 @@ Phase 1 tests green; docs link from README optional section behind flag.
 
 ## Phase 2 — Granularity + gates + surfaces
 
-### Scope
-- `workflow.worker` override path (model/prompt/tools/profile/workspace)  
-- `gate` node + CLI `workflow gate` + optional Telegram parse hook  
-- Optional toolset `workflow` + `workflow_run`/`status`/`gate`  
-- Cron recipe documented; optional thin scheduler hook  
-- Webhook start + gate signal (reuse gateway secret model)  
-- Output JSON schema validation  
-- `max_budget_usd` circuit breaker  
-- Budget/ports verifier completeness  
+**Status: SHIPPED (partial — scoped honestly below).** See `IMPLEMENTATION_LOG.md`
+§Phase 2 and `PHASE2_SURFACES.md`.
+
+### Scope — what actually shipped
+- ✅ **Live worker + model override path.** `workflow/runtime/live.py` —
+  `LiveWorker` runs agent nodes as real `AIAgent` children through
+  `tools/delegate_tool.py`'s canonical construction path. No `spec.model` →
+  inherits the runtime parent's model/provider; `spec.model` → that node only
+  runs on the override; `spec.provider` → fresh credentials resolved via the
+  same `resolve_runtime_provider` the CLI/gateway use. `effective_model` /
+  `effective_provider` land on the node-run and in node events.
+- ✅ **No silent FakeWorker.** FakeWorker requires `HERMES_WORKFLOW_FAKE=1` or
+  `--fake`; otherwise a live worker is built and a missing runtime parent
+  fails loud. This reverses the Phase 1 default at every layer including
+  `Driver.__init__`.
+- ✅ **Gate unpark.** `resume()` resolves the on-disk decision: `approve` →
+  gate succeeds on the `approve` port and downstream continues; `shelve` →
+  gate skipped on the `shelve` port and downstream never executes; no
+  decision → stays `awaiting_gate` (an open gate can never become
+  `succeeded`).
+- ✅ **Notifications.** Best-effort, through Hermes's existing
+  `send_message_tool` path, on terminal status and on gate park. A delivery
+  failure is logged into the run's event log and never fails a run.
+- ✅ **Optional toolset `workflow`** — `workflow_run` / `workflow_status`,
+  default-off behind `workflow.tool_enabled` + `workflow.enabled`, fixed at
+  session start via `check_fn` (no mid-turn toolset mutation).
+- ✅ **Cron + webhook recipes** documented with a working example script
+  (`PHASE2_SURFACES.md`, `examples-phase2-cron.sh`).
+- ✅ **Output JSON schema validation** (opt-in per node via `spec.output`).
+- ✅ **`max_budget_usd` circuit breaker** — trips to `paused` with
+  `pause_reason: BUDGET`, breaks the loop, documented resume policy.
+- ✅ **Failed-upstream cascade** (latent Phase 1 debt) — downstream of a
+  failed node is marked `skipped` with a reason instead of hanging `pending`;
+  `--retry-failed` un-sticks the cascade.
+
+### Explicitly NOT shipped in Phase 2 (still rejected by the verifier)
+`spec.tools`, `spec.profile`, `spec.max_turns`, `spec.workspace` remain
+**rejected** (or warn-only behind `workflow.phase1_warn_overrides`). The live
+child inherits the parent's toolsets; there is no per-node tool narrowing or
+profile isolation yet, so the verifier refuses to accept a field it cannot
+enforce rather than silently dropping a `tools:` allowlist. Claiming
+isolation we don't enforce is the one failure mode worth being loud about.
+
+Also deferred: native `triggers:` dispatch (cron/webhook are host-surface
+recipes, not a second scheduler), `gate` decisions as a conversation tool
+(deliberate — an agent that can approve its own gates is not a gate), and
+`modify` gate decisions (requires re-authoring the definition; the runtime
+says so rather than pretending).
 
 ### Acceptance
-1. Gate parks run; approve continues; shelve skips exec.  
-2. Per-node model override visible in node events (mock).  
-3. Tool call from isolated session starts run without cache thrash (toolset fixed at session start).  
-4. Webhook HMAC rejection path tested.  
+1. ✅ Gate parks run; approve continues; shelve skips exec (proved with
+   side-effect counters that the downstream node is never *invoked*).
+2. ✅ Per-node model override visible in node events (mock).
+3. ✅ Tool call from isolated session starts run without cache thrash
+   (toolset fixed at session start via `check_fn`).
+4. ⚠️ Webhook HMAC rejection path — **not re-tested here by design.** Phase 2
+   reuses the existing gateway webhook route rather than adding a second HMAC
+   implementation, so the rejection path is covered by that route's own
+   tests. A duplicate implementation would be new attack surface for no new
+   capability.
 
 ---
 

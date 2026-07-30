@@ -2627,6 +2627,20 @@ def _build_child_preserving_parent_tools(**kwargs):
     return child
 
 
+def build_child_agent(**kwargs):
+    """Public, stable entry point for constructing a delegation child agent.
+
+    Thin wrapper around ``_build_child_preserving_parent_tools`` (itself a
+    lock-guarded wrapper around ``_build_child_agent``). This is the entry
+    point out-of-tree callers (e.g. the ``workflow`` package's live agent
+    worker) should use instead of reaching into the private
+    ``_build_child_agent``/``_build_child_preserving_parent_tools`` helpers,
+    whose signatures/locking behavior are internal implementation details.
+    Accepts the same keyword arguments as ``_build_child_agent``.
+    """
+    return _build_child_preserving_parent_tools(**kwargs)
+
+
 def _parent_finalization_lock(parent_agent) -> threading.RLock:
     """Return the per-parent lock that serializes lifecycle side effects."""
     if parent_agent is None:
@@ -2750,6 +2764,20 @@ def _run_child_lifecycle(
         parent_agent,
     )
     return result
+
+
+def run_child_agent(
+    task_index: int, goal: str, child=None, parent_agent=None
+) -> Dict[str, Any]:
+    """Public, stable entry point for running a pre-built child agent.
+
+    Thin wrapper around ``_run_child_lifecycle``: runs ``child`` (built via
+    ``build_child_agent``) and applies the same host lifecycle contract
+    (summary budget, cost rollup, hooks) that ``delegate_task`` applies.
+    Out-of-tree callers (e.g. the ``workflow`` package's live agent worker)
+    should use this instead of the private ``_run_child_lifecycle``.
+    """
+    return _run_child_lifecycle(task_index, goal, child=child, parent_agent=parent_agent)
 
 
 def _recover_tasks_from_json_string(
