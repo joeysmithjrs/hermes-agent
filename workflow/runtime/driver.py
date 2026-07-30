@@ -317,6 +317,12 @@ class RunState:
     # Terminal-status fingerprint of the last notification actually sent,
     # so repeated resumes of an already-terminal run do not re-notify.
     notified_fingerprint: Optional[str] = None
+    # Post-Phase-3 §6 loop-back lineage: which run seeded this one
+    # ({run_id, workflow_id, status, select, as}). A backward route is a NEW
+    # run, never a graph cycle, so the link between the two lives here in the
+    # record rather than in the graph. Absent (None) for an unchained run, so
+    # every pre-lineage checkpoint loads unchanged.
+    from_run: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -337,6 +343,7 @@ class RunState:
             "tokens_out": self.tokens_out,
             "pause_reason": self.pause_reason,
             "notified_fingerprint": self.notified_fingerprint,
+            "from_run": self.from_run,
         }
 
     @classmethod
@@ -358,6 +365,7 @@ class RunState:
             node_runs_by_node={k: list(v) for k, v in (d.get("node_runs_by_node") or {}).items()},
             pause_reason=d.get("pause_reason"),
             notified_fingerprint=d.get("notified_fingerprint"),
+            from_run=d.get("from_run"),
         )
         for nr_id, nrd in (d.get("node_runs") or {}).items():
             s.node_runs[nr_id] = NodeRun.from_dict(nrd)
@@ -377,6 +385,7 @@ class Driver:
         max_parallel_nodes: int = 4,
         max_budget_usd: float = 10.0,
         notifier: Optional[Callable[..., Dict[str, Any]]] = None,
+        from_run: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.vir = vir
         self.ir: WorkflowIR = vir.ir
@@ -409,7 +418,14 @@ class Driver:
         for e in self.edges:
             self.outgoing.setdefault(e.from_, []).append(e)
             self.incoming.setdefault(e.to, []).append(e)
-        self.state: RunState = RunState(run_id=self.run_id, workflow_id=self.ir.id, started_at=_ts())
+        self.state: RunState = RunState(
+            run_id=self.run_id,
+            workflow_id=self.ir.id,
+            started_at=_ts(),
+            # Post-Phase-3 §6: recorded at creation so the lineage is durable
+            # from the first checkpoint, not only in the final envelope.
+            from_run=from_run,
+        )
         # transient branch items (not persisted): node_run_id -> branch item
         self._branch_items: Dict[str, Any] = {}
         # Resolved once per execute() from ir.workspace (see _ensure_workspace).
@@ -2557,6 +2573,7 @@ class Driver:
             # live.extract_cost_and_tokens).
             "tokens_in": self.state.tokens_in,
             "tokens_out": self.state.tokens_out,
+            "from_run": self.state.from_run,
             "final_output_ref": f"runs/{self.run_id}/run_output.json",
             "resume_hint": resume_hint,
         }
@@ -2584,6 +2601,7 @@ def run(
     max_parallel_nodes: int = 4,
     max_budget_usd: float = 10.0,
     notifier: Optional[Callable[..., Dict[str, Any]]] = None,
+    from_run: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Execute a verified IR with a worker (default FakeWorker).
 
@@ -2609,6 +2627,7 @@ def run(
         max_parallel_nodes=max_parallel_nodes,
         max_budget_usd=max_budget_usd,
         notifier=notifier,
+        from_run=from_run,
     )
     return d.execute(dry_run=dry_run)
 

@@ -122,8 +122,14 @@ def run(
     dry_run: bool = False,
     max_parallel_nodes: Optional[int] = None,
     max_budget_usd: Optional[float] = None,
+    from_run: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Execute a verified IR (or a path to one) with a worker (default FakeWorker)."""
+    """Execute a verified IR (or a path to one) with a worker (default FakeWorker).
+
+    ``from_run`` (post-Phase-3 §6) records which run seeded this one. A
+    backward route is a NEW run, not a graph cycle, so the link lives in the
+    run record -- see ``workflow.chain.build_lineage``.
+    """
     cfg = load_workflow_config()
     if not dry_run and not cfg.get("enabled", False):
         # HERMES_WORKFLOW_FAKE=1 forces FakeWorker but still requires enabled for live runs;
@@ -152,6 +158,7 @@ def run(
         dry_run=dry_run,
         max_parallel_nodes=max_parallel_nodes or int(cfg.get("max_parallel_nodes", 4)),
         max_budget_usd=max_budget_usd if max_budget_usd is not None else float(cfg.get("max_budget_usd", 10.0)),
+        from_run=from_run,
     )
 
 
@@ -203,6 +210,9 @@ def status(run_id: str) -> Dict[str, Any]:
         "tokens_out": rec.get("tokens_out", getattr(state, "tokens_out", None)),
         # Phase 2 TASK 5 field; already on RunState, just wasn't surfaced here.
         "pause_reason": getattr(state, "pause_reason", None),
+        # Post-Phase-3 §6: lineage of a loop-back/chained run. None when this
+        # run was not seeded from another (and for pre-lineage checkpoints).
+        "from_run": rec.get("from_run", getattr(state, "from_run", None)),
     }
 
 

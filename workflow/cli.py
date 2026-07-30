@@ -57,7 +57,9 @@ def register_subparser(subparsers) -> None:
     p.add_argument("path_or_id", help="Path to workflow YAML/JSON, or a run_id to resume")
     p.add_argument("--input", help="JSON input string (merged with --from-run's derived input, if given; explicit --input wins on key collision)")
     p.add_argument("--resume", dest="resume", help="Resume a run_id")
-    p.add_argument("--from", dest="from_node", help="Resume from a node id")
+    # `--from-node` is the spelled-out alias; both write to the same dest, so
+    # there is one flag with two names rather than two flags to keep in sync.
+    p.add_argument("--from", "--from-node", dest="from_node", help="With --resume: resume from a node id")
     p.add_argument("--retry-failed", action="store_true", help="Re-run failed nodes on resume")
     p.add_argument("--dry-run", action="store_true", help="Compile + plan ready set without spawning")
     p.add_argument("--max-budget-usd", type=float, help="Override run budget cap")
@@ -111,6 +113,22 @@ def register_subparser(subparsers) -> None:
     p.add_argument("--dry-run", action="store_true", help="Compile + plan ready set without spawning")
     p.add_argument("--fake", action="store_true", help="Use the no-LLM FakeWorker instead of a live agent worker")
     p.set_defaults(func=_cmd_chain)
+
+    # restart (post-Phase-3 §6 loop-back sugar)
+    p = wf_sub.add_parser(
+        "restart",
+        help="Re-run the SAME workflow a prior run used, seeded from that run's output (loop-back)",
+    )
+    p.add_argument("run_id", help="run_id to restart (its workflow definition and output are reused)")
+    p.add_argument("--input-from-run", dest="input_from_run", help="Take the seed input from a DIFFERENT run than the one being restarted")
+    p.add_argument("--select", help="Dotted path into the source run's final envelope (default: the whole envelope)")
+    p.add_argument("--as", dest="as_key", default="from_run", help="Key to wrap the selected value under (default: from_run)")
+    p.add_argument("--input", help="Additional JSON input, merged with the derived input (explicit --input wins on key collision)")
+    p.add_argument("--allow-incomplete", action="store_true", help="Allow seeding from a source run that has not reached a terminal status")
+    p.add_argument("--dry-run", action="store_true", help="Compile + plan ready set without spawning")
+    p.add_argument("--max-budget-usd", type=float, help="Override run budget cap")
+    p.add_argument("--fake", action="store_true", help="Use the no-LLM FakeWorker instead of a live agent worker")
+    p.set_defaults(func=_cmd_restart)
 
     # schedule
     p = wf_sub.add_parser("schedule", help="Print (or register) a cron recipe that runs a workflow on a schedule")
@@ -180,7 +198,7 @@ def cmd_workflow(args) -> int:
     if not getattr(args, "workflow_command", None):
         sys.stderr.write(
             "usage: hermes workflow <validate|compile|run|status|watch|logs|list|cancel|doctor|"
-            "gate|chain|schedule|register|list-catalog|run-catalog> ...\n"
+            "gate|chain|restart|schedule|register|list-catalog|run-catalog> ...\n"
         )
         return EXIT_USAGE
     fn = getattr(args, "func", None)
@@ -295,14 +313,17 @@ def _cmd_run(args) -> int:
     # there is exactly one implementation of "read a source run, derive an
     # input dict" (see workflow/chain.py docstring).
     from_run = getattr(args, "from_run", None)
+    lineage: Optional[Dict[str, Any]] = None
     if from_run:
         if args.resume:
             sys.stderr.write("error: --from-run cannot be combined with --resume.\n")
             return EXIT_USAGE
-        from .chain import resolve_chain_input, ChainSourceNotTerminal
+        from .chain import resolve_chain, ChainSourceNotTerminal
 
         try:
-            input_data = resolve_chain_input(
+            # One read of the source run yields BOTH the derived input and the
+            # lineage describing it -- see chain.resolve_chain.
+            resolved = resolve_chain(
                 from_run,
                 select=getattr(args, "select", None),
                 as_key=getattr(args, "as_key", None) or "from_run",
@@ -315,6 +336,8 @@ def _cmd_run(args) -> int:
         except FileNotFoundError as e:
             sys.stderr.write(f"error: {e}\n")
             return EXIT_RUNTIME
+        input_data = resolved["input"]
+        lineage = resolved["lineage"]
     else:
         input_data = explicit_input
 
@@ -347,11 +370,12 @@ def _cmd_run(args) -> int:
         )
     else:
         env = run(
-            args.path_or_id,
+            getattr(args, "vir", None) or args.path_or_id,
             input=input_data,
             worker=worker,
             dry_run=args.dry_run,
             max_budget_usd=args.max_budget_usd,
+            from_run=lineage,
         )
     sys.stdout.write(json.dumps(env, indent=2, default=str) + "\n")
     if env.get("status") == "awaiting_gate":
@@ -575,6 +599,76 @@ def _cmd_chain(args) -> int:
         max_budget_usd=None,
         fake=args.fake,
         from_run=args.source_run_id,
+        select=args.select,
+        as_key=args.as_key,
+        allow_incomplete=args.allow_incomplete,
+    )
+    return _cmd_run(run_args)
+
+
+def _cmd_restart(args) -> int:
+    """`hermes workflow restart RUN_ID [--input-from-run OTHER] ...`
+
+    The loop-back form: re-run the workflow a prior run used, seeded from that
+    run's own output. This is what "route backwards" means here -- a NEW run
+    with a NEW run_id, linked to the old one by recorded lineage
+    (`from_run`), NOT a cycle in the graph. The verifier still rejects cycles;
+    previous artifacts and checkpoints are untouched; the new run resumes,
+    chains and audits exactly like any other.
+
+    Unlike `chain`, no workflow path is needed: the definition is the one the
+    source run already compiled (`workflows/definitions/<workflow_id>.json`),
+    so closing the loop is `restart <run_id>` and nothing else. `--input-from-run`
+    seeds from a DIFFERENT run than the one being restarted (feed run B's result
+    back into run A's workflow).
+    """
+    from . import status as _status
+    from .store import fs
+    from .ir import VerifiedIR
+
+    try:
+        source = _status(args.run_id)
+    except FileNotFoundError as e:
+        sys.stderr.write(f"error: {e}\n")
+        return EXIT_RUNTIME
+
+    workflow_id = source.get("workflow_id")
+    defp = fs.definition_path(workflow_id) if workflow_id else None
+    if not defp or not defp.exists():
+        sys.stderr.write(
+            f"error: no compiled definition for workflow '{workflow_id}' "
+            f"(expected {defp}). Re-compile it, or use `hermes workflow chain "
+            f"{args.run_id} <workflow.yaml>` to name the target explicitly.\n"
+        )
+        return EXIT_RUNTIME
+    # Re-verify the stored definition at load, exactly as resume() does: a
+    # tampered `definitions/<id>.json` must be rejected, not trusted merely
+    # because some earlier run used it. Warn-mode matches how a warn-accepted
+    # workflow originally compiled; structural/security errors still reject.
+    from .ir import WorkflowRejected
+    from .verify import verify_ir
+
+    stored = VerifiedIR.from_dict(fs.read_json(defp))
+    try:
+        vir = verify_ir(stored.ir, phase1_warn_overrides=True)
+    except WorkflowRejected as e:
+        sys.stderr.write(
+            f"error: stored definition for workflow '{workflow_id}' failed re-verification "
+            f"(tampered or corrupt): {e}\n"
+        )
+        return EXIT_VERIFY
+
+    run_args = argparse.Namespace(
+        path_or_id=str(defp),
+        vir=vir,
+        input=args.input,
+        resume=None,
+        from_node=None,
+        retry_failed=False,
+        dry_run=args.dry_run,
+        max_budget_usd=args.max_budget_usd,
+        fake=args.fake,
+        from_run=getattr(args, "input_from_run", None) or args.run_id,
         select=args.select,
         as_key=args.as_key,
         allow_incomplete=args.allow_incomplete,
