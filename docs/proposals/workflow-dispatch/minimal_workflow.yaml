@@ -1,0 +1,40 @@
+# Illustrative only — validate once `hermes workflow validate` exists
+workflow: minimal_linear
+version: 1
+defaults:
+  model: openrouter/x-ai/grok-4.5
+  timeout_s: 600
+  max_turns: 12
+max_budget_usd: 1.0
+nodes:
+  - id: research
+    kind: agent
+    spec:
+      prompt: |
+        Research {{ input.topic }}. Return JSON {"bullets":[...],"sources":[...]}
+      # NOTE: tools/model/profile are override-only fields the Phase 1 inherit
+      # path cannot enforce (AUDIT F2); they are rejected under the default strict
+      # posture. The Phase 2 subprocess override path will honor them. Omitted
+      # here so this example validates by default (`hermes workflow validate`).
+      budget_usd: 0.4
+      output:
+        type: object
+        required: [bullets, sources]
+  - id: write
+    kind: agent
+    spec:
+      prompt: |
+        Turn this research into a short markdown brief:
+        {{ research.output }}
+      budget_usd: 0.3
+  - id: notify
+    kind: script
+    run: workflow.examples.notify_telegram
+    idempotent: true
+    input:
+      text: "{{ write.output }}"
+edges:
+  - { from: research, to: write }
+  - { from: write, to: notify }
+triggers:
+  - { kind: manual }

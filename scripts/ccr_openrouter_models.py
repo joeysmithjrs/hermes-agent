@@ -317,7 +317,7 @@ if command -v node >/dev/null 2>&1; then
 fi
 ELECTRON_RUN_AS_NODE=1 exec /usr/bin/node '{middleware}' "$@"
 """
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     path.chmod(0o700)
 
 
