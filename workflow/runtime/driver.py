@@ -4,23 +4,36 @@ Control flow is code, not an LLM loop. The driver:
 1. Loads verified IR + run record (or creates one).
 2. Computes ready node-runs (upstreams succeeded, conditions satisfied).
 3. Starts each ready node per kind (agent via worker, script via registry,
-   fanout materializes branches, join reduces, gate parks).
+   fanout materializes branches, map materializes+runs+reduces branches in
+   one node, join reduces, gate parks).
 4. Writes envelope + event log, checkpoints, repeats until terminal.
 
-Node bodies keyed by ``node_run_id`` (F1). Fanout branches each get a unique
-node_run_id. side_effects: external nodes resume to failed (INTERRUPTED), not
-requeued (F6). Fanout over max_branches -> failed CARDINALITY, no overspawn (F5).
+Node bodies keyed by ``node_run_id`` (F1). Fanout/map branches each get a
+unique node_run_id. side_effects: external nodes resume to failed
+(INTERRUPTED), not requeued, and are never auto-retried by ``on_fail: retry``
+(F6). Fanout/map over max_branches -> failed CARDINALITY, no overspawn (F5).
+
+Phase 3 additions (§A): ``map`` = fanout + implicit join in one node (its own
+output is the reduced value over its branches, see ``_run_fanout``); richer
+``reduce:`` types ``first_k``/``majority``/``best`` (``workflow.runtime.
+scripts``) alongside ``concat``/``top_k``, dispatched from one place
+(``Driver._select_reducer``) shared by ``join`` and ``map``; per-node
+``on_fail`` policies (``fail_run``/``skip_downstream``/``continue``/``retry``,
+see ``Driver._apply_on_fail``); and real bounded concurrency for
+``max_parallel_nodes > 1`` (``Driver._run_ready_batch``).
 """
 
 from __future__ import annotations
 
+import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from ..expr import TemplateError, eval_condition
-from ..ir import Node, VerifiedIR, WorkflowIR
+from ..ir import DEFAULT_ON_FAIL, Node, VerifiedIR, WorkflowIR
 from ..store import fs
 from ..store import checkpoint as ckpt
 from . import events
@@ -147,6 +160,10 @@ class NodeRun:
     started_at: Optional[str] = None
     ended_at: Optional[str] = None
     cost_usd: float = 0.0
+    # TASK 5: per-node-run token rollup. Default 0 so a pre-Phase-3
+    # checkpoint (no such keys on disk) still loads via `.get(..., 0)`.
+    tokens_in: int = 0
+    tokens_out: int = 0
     port: Optional[str] = None
     output: Any = None
     error: Optional[Dict[str, Any]] = None
@@ -175,6 +192,8 @@ class NodeRun:
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "cost_usd": self.cost_usd,
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
             "port": self.port,
             "output": self.output,
             "error": self.error,
@@ -198,6 +217,8 @@ class NodeRun:
             started_at=d.get("started_at"),
             ended_at=d.get("ended_at"),
             cost_usd=d.get("cost_usd", 0.0),
+            tokens_in=d.get("tokens_in", 0),
+            tokens_out=d.get("tokens_out", 0),
             port=d.get("port"),
             output=d.get("output"),
             error=d.get("error"),
@@ -229,6 +250,12 @@ class RunState:
     started_at: Optional[str] = None
     ended_at: Optional[str] = None
     cost_usd: float = 0.0
+    # TASK 5: run-level token totals -- the sum of every LEAF node-run's
+    # tokens (agent/script/branch), counted exactly once each. A fanout/map
+    # node's own rolled-up tokens_in/out (its subtree total, for display) are
+    # NOT added here a second time -- see Driver._finish_top_level.
+    tokens_in: int = 0
+    tokens_out: int = 0
     # Phase 2 TASK 5: why status == "paused" (currently only "BUDGET").
     # Defaults to None so pre-Phase-2 checkpoints still load.
     pause_reason: Optional[str] = None
@@ -251,6 +278,8 @@ class RunState:
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "cost_usd": self.cost_usd,
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
             "pause_reason": self.pause_reason,
             "notified_fingerprint": self.notified_fingerprint,
         }
@@ -265,6 +294,8 @@ class RunState:
             started_at=d.get("started_at"),
             ended_at=d.get("ended_at"),
             cost_usd=d.get("cost_usd", 0.0),
+            tokens_in=d.get("tokens_in", 0),
+            tokens_out=d.get("tokens_out", 0),
             awaiting_gate=d.get("awaiting_gate"),
             succeeded=list(d.get("succeeded") or []),
             failed=list(d.get("failed") or []),
@@ -305,10 +336,14 @@ class Driver:
         # `set_notifier()` made after this Driver was constructed still
         # takes effect. See `_fire_notify`.
         self.notifier = notifier
-        # Phase 1 executes nodes and fanout branches strictly sequentially
-        # (deterministic, checkpoint-safe). max_parallel_nodes is accepted for
-        # config/forward-compat but is a reserved no-op; bounded concurrency is
-        # a Phase 2 deliverable.
+        # TASK 4: real bounded concurrency. <= 1 takes the Phase 1/2
+        # strictly-sequential code path verbatim (see `execute()`); > 1
+        # dispatches pool-eligible node-runs (top-level agent/script, and
+        # any fanout/map branch) through a
+        # `concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel_nodes)`.
+        # fanout/map/join/gate node-runs always run on the main thread (see
+        # `_run_ready_batch`'s docstring for why that's a hard rule, not
+        # just an optimization).
         self.max_parallel_nodes = max_parallel_nodes
         self.max_budget_usd = max_budget_usd
         self.nodes: Dict[str, Node] = {n.id: n for n in self.ir.nodes}
@@ -322,6 +357,19 @@ class Driver:
         self.state: RunState = RunState(run_id=self.run_id, workflow_id=self.ir.id, started_at=_ts())
         # transient branch items (not persisted): node_run_id -> branch item
         self._branch_items: Dict[str, Any] = {}
+        # TASK 4: guards mutation of RunState aggregates (cost_usd,
+        # tokens_in/out, succeeded/failed) from `_finish_top_level`/
+        # `_finish_branch` -- both are only ever called from the main
+        # thread in this Driver's own design, but the lock is cheap
+        # insurance against a future call site forgetting that invariant.
+        self._agg_lock = threading.Lock()
+        # TASK 3 `on_fail: fail_run`: set True the instant a node-run's
+        # effective policy is fail_run and it fails. Transient (not
+        # checkpointed) -- the checkpointed signal is `state.status ==
+        # "failed"`, set directly by `_abort_run`; this flag only tells
+        # THIS execute() call's dispatch loop to stop handing out further
+        # ready-set batches.
+        self._aborted = False
 
     @property
     def worker(self) -> Worker:
@@ -372,25 +420,45 @@ class Driver:
             ready = self._compute_ready()
             if not ready:
                 break
-            budget_tripped = False
-            for nr in ready:
-                self._run_node_run(nr)
-                self._checkpoint()
-                # TASK 5: cost accrues mid-loop (each node-run adds to
-                # state.cost_usd), so re-check after every node-run too, not
-                # just at the top of the loop — otherwise a batch of ready
-                # nodes could all start before the trip is ever observed.
-                self._check_budget()
-                if self.state.status == "paused":
-                    # Persist the pause immediately. Without this the last
-                    # checkpoint still says "running" with cost already over
-                    # budget, so a crash in the window before _finalize()
-                    # leaves the on-disk record under-reporting the state.
+
+            if self.max_parallel_nodes <= 1:
+                # TASK 4: max_parallel_nodes <= 1 takes this strictly
+                # sequential path VERBATIM (unchanged since Phase 1) --
+                # never routed through the thread pool, so its behavior
+                # (ordering, checkpoint count, timing) is byte-for-byte the
+                # same as before this task existed.
+                budget_tripped = False
+                for nr in ready:
+                    self._run_node_run(nr)
                     self._checkpoint()
-                    budget_tripped = True
+                    # TASK 5: cost accrues mid-loop (each node-run adds to
+                    # state.cost_usd), so re-check after every node-run too, not
+                    # just at the top of the loop — otherwise a batch of ready
+                    # nodes could all start before the trip is ever observed.
+                    self._check_budget()
+                    if self.state.status == "paused":
+                        # Persist the pause immediately. Without this the last
+                        # checkpoint still says "running" with cost already over
+                        # budget, so a crash in the window before _finalize()
+                        # leaves the on-disk record under-reporting the state.
+                        self._checkpoint()
+                        budget_tripped = True
+                        break
+                    if self._aborted:
+                        # TASK 3 on_fail: fail_run — stop dispatching further
+                        # ready node-runs THIS batch. Nothing after this point
+                        # has been started yet, so "stop" is exact here (unlike
+                        # the concurrent path, where a batch's pool items may
+                        # already be in flight by the time the abort is seen).
+                        break
+                if budget_tripped or self._aborted:
                     break
-            if budget_tripped:
-                break
+            else:
+                # TASK 4: bounded concurrency for pool-eligible node-runs.
+                budget_tripped = self._run_ready_batch(ready)
+                if budget_tripped or self._aborted:
+                    break
+
             # a gate parks the run -> stop
             if self.state.status == GATE_PARKED:
                 break
@@ -548,11 +616,25 @@ class Driver:
                 continue
             for nrid in runs:
                 st = self.state.node_runs[nrid].status
-                # TASK 4 failed-upstream cascade: a `failed` upstream in a
-                # `from:` join list never produces output either — same
-                # policy as `skipped` (see _edge_state for the `edges:` twin
-                # of this rule, and the module docstring on --retry-failed).
-                if st in ("skipped", "failed"):
+                if st == "failed":
+                    # Phase 3 §A on_fail: `continue` — a failed upstream
+                    # with this policy never produces output, but must NOT
+                    # block a `from:` join either. Treat it as resolved
+                    # (neither blocking nor pending) and move on to the
+                    # next upstream; `_run_join`'s envelope collection will
+                    # naturally include it with a null output.
+                    up_node = self.nodes.get(up)
+                    if up_node is not None and up_node.fail_policy == "continue":
+                        continue
+                    # TASK 4 (Phase 2) failed-upstream cascade: every other
+                    # policy (skip_downstream default, fail_run, retry-not-
+                    # yet-exhausted is still `pending` not `failed` here) —
+                    # a `failed` upstream in a `from:` join list never
+                    # produces output either — same policy as `skipped`
+                    # (see _edge_state for the `edges:` twin of this rule,
+                    # and the module docstring on --retry-failed).
+                    return "skip"
+                if st == "skipped":
                     return "skip"
                 if st != "succeeded":
                     waiting = True
@@ -580,13 +662,24 @@ class Driver:
         if primary.status == "skipped":
             return "blocked"
         if primary.status == "failed":
-            # TASK 4 failed-upstream cascade (Phase 1 debt): a `failed`
-            # upstream never produces output, so a downstream node waiting on
-            # it can never become ready either. Policy: treat it exactly like
-            # a skipped upstream -> "blocked", which _resolve_edge_upstreams
-            # turns into "skip", and _propagate_skips marks the downstream
-            # node `skipped` (with a recorded reason) rather than `failed` --
-            # it never ran, so `failed` would misrepresent it. This cascades
+            # Phase 3 §A on_fail: `continue` — this upstream's failure must
+            # NOT block downstream. There is no successful output to
+            # template against (the node never produced one), so a
+            # `condition:` on THIS edge can't be evaluated -- fail closed
+            # (blocked) rather than silently treating an unevaluable
+            # condition as true. An unconditional edge (no `condition:`) is
+            # fully satisfied.
+            upstream_node = self.nodes.get(edge.from_)
+            if upstream_node is not None and upstream_node.fail_policy == "continue":
+                return "blocked" if edge.condition is not None else "satisfied"
+            # TASK 4 (Phase 2) failed-upstream cascade (Phase 1 debt): a
+            # `failed` upstream never produces output, so a downstream node
+            # waiting on it can never become ready either. Policy (every
+            # OTHER on_fail value): treat it exactly like a skipped
+            # upstream -> "blocked", which _resolve_edge_upstreams turns
+            # into "skip", and _propagate_skips marks the downstream node
+            # `skipped` (with a recorded reason) rather than `failed` -- it
+            # never ran, so `failed` would misrepresent it. This cascades
             # transitively through _propagate_skips's fixed-point loop.
             #
             # `--retry-failed` on resume() resets a failed node-run back to
@@ -617,8 +710,14 @@ class Driver:
     # ---- node execution ---------------------------------------------------
 
     def _run_node_run(self, nr: NodeRun) -> None:
-        # Branch node-runs retain the parent fanout node_id. Always dispatch them
-        # through their persisted branch leaf rather than re-entering the fanout.
+        """Sequential entry point: max_parallel_nodes <= 1's main loop, and
+        (via `_run_branches`) the sequential fanout/map branch path. A
+        branch node-run — including one resurfaced `pending` by an
+        `on_fail: retry` reset (TASK 3), which `_compute_ready` will hand
+        back here through the normal ready-set walk — always dispatches
+        through its persisted branch leaf, never by re-entering the parent
+        fanout.
+        """
         if nr.branch_index is not None:
             self._run_one_branch(nr)
             return
@@ -629,14 +728,42 @@ class Driver:
         if node is None:
             nr.status = "failed"
             nr.error = {"code": "VERIFY", "message": f"unknown node {nr.node_id}", "retriable": False}
-            self.state.failed.append(nr.node_id)
+            if nr.node_id not in self.state.failed:
+                self.state.failed.append(nr.node_id)
             return
 
+        self._mark_top_level_running(nr, node)
+        self._checkpoint()
+        self._top_level_compute(nr, node)
+        self._finish_top_level(nr, node)
+
+    # ---- TASK 4: mark / compute / finish primitives ------------------------
+    #
+    # Every node-run's lifecycle is split into three phases so the same
+    # pieces serve both the sequential path (`_run_node_run` above) and the
+    # bounded-concurrency batch path (`_run_ready_batch` below) without
+    # duplicating logic:
+    #   mark    -- status="running" + started_at + start event. Cheap, must
+    #              happen for the WHOLE batch before any future is submitted
+    #              (checkpoint-before-dispatch).
+    #   compute -- the actual work (worker call / script call / fanout
+    #              materialize+reduce / join reduce / gate park). Mutates
+    #              ONLY the node-run's own `nr` fields (plus, for
+    #              fanout/map/join/gate, `self.state.node_runs`/
+    #              `node_runs_by_node`/`status` directly -- those kinds
+    #              never run inside a worker thread, see
+    #              `_run_ready_batch`). Never raises: any exception is
+    #              caught into nr.status/nr.error.
+    #   finish  -- end event, RunState aggregate mutation (cost/tokens/
+    #              succeeded/failed), output storage, on_fail dispatch.
+    #              Main-thread only, always.
+
+    def _mark_top_level_running(self, nr: NodeRun, node: Node) -> None:
         nr.status = "running"
         nr.started_at = _ts()
         events.start_event(self.run_id, nr.node_run_id, nr.node_id, node.kind)
-        self._checkpoint()
 
+    def _top_level_compute(self, nr: NodeRun, node: Node) -> None:
         try:
             if node.kind == "agent":
                 self._run_agent(nr, node)
@@ -655,12 +782,30 @@ class Driver:
         except Exception as exc:
             nr.status = "failed"
             nr.error = {"code": "AGENT", "message": str(exc), "retriable": True}
-            if node.id not in self.state.failed:
-                self.state.failed.append(node.id)
-            events.end_event(self.run_id, nr.node_run_id, nr.node_id, "failed")
-            return
 
+    def _finish_top_level(self, nr: NodeRun, node: Node) -> None:
         nr.ended_at = _ts()
+        with self._agg_lock:
+            if node.kind not in ("fanout", "map"):
+                # TASK 5: a fanout/map node's own cost/tokens are a ROLLUP
+                # over its branches, computed in `_run_fanout` for display
+                # (so `{{ mynode.output }}`'s envelope reports true subtree
+                # cost) -- NOT an additional contribution to the run-level
+                # total. Each branch already added its own cost/tokens
+                # exactly once via `_finish_branch`; adding the fanout/map
+                # node's rolled-up total here too would double-count it.
+                # Every other kind (agent/script/join/gate) is the SOLE
+                # contributor of its own cost, so it's folded in exactly
+                # once, right here.
+                self.state.cost_usd += nr.cost_usd
+                self.state.tokens_in += nr.tokens_in
+                self.state.tokens_out += nr.tokens_out
+            if nr.status == "succeeded" and node.id not in self.state.succeeded:
+                self.state.succeeded.append(node.id)
+            elif nr.status == "failed" and node.id not in self.state.failed:
+                self.state.failed.append(node.id)
+        if nr.cost_usd:
+            events.cost_event(self.run_id, nr.node_run_id, nr.cost_usd)
         events.end_event(
             self.run_id,
             nr.node_run_id,
@@ -669,12 +814,12 @@ class Driver:
             effective_model=nr.effective_model,
             effective_provider=nr.effective_provider,
         )
-        if nr.status == "succeeded" and node.id not in self.state.succeeded:
-            self.state.succeeded.append(node.id)
         # store output (F1: keyed by node_run_id)
         if nr.output is not None:
             out_path = fs.store_node_output(self.run_id, nr.node_run_id, nr.output)
             events.emit(self.run_id, nr.node_run_id, {"event": "stored", "path": str(out_path.relative_to(fs.workflows_root()))})
+        if nr.status == "failed":
+            self._apply_on_fail(nr, node)
 
     def _build_ctx(self, node: Node) -> Dict[str, Any]:
         """Build the template ctx from succeeded upstream outputs + run input."""
@@ -695,13 +840,21 @@ class Driver:
         return ctx
 
     def _run_agent(self, nr: NodeRun, node: Node) -> None:
+        """Compute-only (TASK 4): safe to call from a worker thread —
+        mutates only `nr`'s own fields. RunState aggregate mutation
+        (cost/tokens/succeeded/failed) happens later, on the main thread,
+        in `_finish_top_level`."""
         ctx = self._build_ctx(node)
         # Pass rendered input as the worker ctx input
         ctx["input"] = ctx.get("input_for_node", {})
         result = self.worker.run_node(node, ctx)
         nr.output = result.get("output")
         nr.cost_usd = float(result.get("cost_usd", 0.0) or 0.0)
-        self.state.cost_usd += nr.cost_usd
+        # TASK 5: top-level cost_usd/tokens_in/tokens_out on the worker's
+        # result envelope; a FakeWorker (or any worker that doesn't report
+        # them) means `.get(..., 0)` -> 0, never raises.
+        nr.tokens_in = int(result.get("tokens_in", 0) or 0)
+        nr.tokens_out = int(result.get("tokens_out", 0) or 0)
         # TASK 7: LiveWorker reports the actually-resolved model/provider
         # (post inherit/override). FakeWorker doesn't return these keys, so
         # `.get()` -> None is a silent no-op — never required.
@@ -712,18 +865,16 @@ class Driver:
             if mismatch:
                 nr.status = "failed"
                 nr.error = {"code": "SCHEMA", "message": mismatch, "retriable": False}
-                if node.id not in self.state.failed:
-                    self.state.failed.append(node.id)
                 return
         nr.status = "succeeded"
 
     def _run_script(self, nr: NodeRun, node: Node) -> None:
+        """Compute-only (TASK 4): thread-safe like `_run_agent` — see that
+        method's docstring."""
         ctx = self._build_ctx(node)
         if not node.run or not script_registry.is_registered(node.run):
             nr.status = "failed"
             nr.error = {"code": "SCRIPT", "message": f"run '{node.run}' not registered", "retriable": False}
-            if node.id not in self.state.failed:
-                self.state.failed.append(node.id)
             return
         fn = script_registry.get(node.run)
         # script input: rendered input mapping, or the upstream output
@@ -741,13 +892,25 @@ class Driver:
             if mismatch:
                 nr.status = "failed"
                 nr.error = {"code": "SCHEMA", "message": mismatch, "retriable": False}
-                if node.id not in self.state.failed:
-                    self.state.failed.append(node.id)
                 return
         nr.status = "succeeded"
 
     def _run_fanout(self, nr: NodeRun, node: Node) -> None:
-        """Materialize the branch list from `over`, spawn N branch node-runs (F1, F5)."""
+        """Materialize the branch list from `over`, spawn N branch node-runs
+        (F1, F5), run them, and -- for `kind: map` only (TASK 1) -- reduce
+        them into THIS node's own output.
+
+        `map` is real sugar for "fanout + implicit join in one node": it
+        materializes and runs branches exactly like `fanout`, but its own
+        output becomes the REDUCED value over its branch envelopes (via
+        `reduce:`, defaulting to `concat`) instead of the
+        `{"branches": [...], "count": n}` shape. `fanout` keeps that
+        original shape unchanged for back-compat -- existing tests/
+        workflows depend on it. A `join` node downstream of either still
+        only ever sees the branch envelopes (`_branch_envelopes` always
+        skips the fanout/map node's own entry), so chaining an explicit
+        `join` after a `map` keeps working unchanged.
+        """
         ctx = self._build_ctx(node)
         from ..expr import render
 
@@ -759,8 +922,6 @@ class Driver:
             else:
                 nr.status = "failed"
                 nr.error = {"code": "CARDINALITY", "message": f"fanout over: did not resolve to a list (got {type(branches).__name__})", "retriable": False}
-                if node.id not in self.state.failed:
-                    self.state.failed.append(node.id)
                 return
 
         # F5: runtime hard cap — fail CARDINALITY without overspawning
@@ -771,8 +932,6 @@ class Driver:
                 "message": f"fanout over: list length {len(branches)} exceeds max_branches {node.max_branches}",
                 "retriable": False,
             }
-            if node.id not in self.state.failed:
-                self.state.failed.append(node.id)
             return
 
         # build branch node template
@@ -790,26 +949,203 @@ class Driver:
             branch_nrids.append(bnr.node_run_id)
             self._branch_items[bnr.node_run_id] = item
 
-        # the fanout node itself succeeds with the list of branch node_run_ids
+        # the fanout/map node itself succeeds with the list of branch node_run_ids
+        # (map overwrites this with its reduced output below).
         nr.output = {"branches": branch_nrids, "count": len(branch_nrids)}
         nr.status = "succeeded"
-        if node.id not in self.state.succeeded:
-            self.state.succeeded.append(node.id)
 
-        # immediately run the branches (deterministic order, bounded by max_parallel)
-        self._run_branches(node.id, branch_node)
+        # run the branches (TASK 4: sequential or pool-bounded per
+        # max_parallel_nodes; TASK 2: short-circuit for map+first_k)
+        self._run_branches(node.id, branch_node, node)
 
-    def _run_branches(self, fanout_node_id: str, branch_node: Node) -> None:
-        """Execute spawned branch node-runs in deterministic index order."""
-        for nrid in list(self.state.node_runs_by_node.get(fanout_node_id, [])):
-            nr = self.state.node_runs[nrid]
-            if nr.branch_index is not None and nr.status == "pending":
-                self._run_one_branch(nr)
+        # TASK 5: this node's own cost/tokens are the SUM over its branches
+        # -- a subtree rollup for display only. See `_finish_top_level`'s
+        # fanout/map guard for why this is not ALSO added to the run-level
+        # total (each branch already contributed its own cost exactly once).
+        cost_sum, in_sum, out_sum = self._rollup_branch_cost(node.id)
+        nr.cost_usd = cost_sum
+        nr.tokens_in = in_sum
+        nr.tokens_out = out_sum
+
+        if node.kind == "map":
+            reducer = self._select_reducer(node)
+            nr.output = reducer(self._branch_envelopes(node.id))
+
+    def _rollup_branch_cost(self, fanout_node_id: str) -> Tuple[float, int, int]:
+        """Sum cost_usd/tokens_in/tokens_out over a fanout/map node's own
+        branch node-runs (TASK 5 subtree rollup)."""
+        total_cost = 0.0
+        total_in = 0
+        total_out = 0
+        for nrid in self.state.node_runs_by_node.get(fanout_node_id, []):
+            b = self.state.node_runs[nrid]
+            if b.branch_index is None:
+                continue
+            total_cost += b.cost_usd
+            total_in += b.tokens_in
+            total_out += b.tokens_out
+        return total_cost, total_in, total_out
+
+    def _branch_envelopes(self, fanout_node_id: str) -> List[Dict[str, Any]]:
+        """This fanout/map node's own branch node-run envelopes, in
+        branch-index order. Shared by `_run_join` (when its upstream is a
+        fanout/map) and a `map` node's own implicit reduction (TASK 1), so
+        both paths agree on exactly which node-runs count as "the
+        branches" -- never the fanout/map node's OWN envelope, which holds
+        the branch node_run_id list (or, for map, the already-reduced
+        value), not branch data."""
+        entries: List[Tuple[int, Dict[str, Any]]] = []
+        for nrid in self.state.node_runs_by_node.get(fanout_node_id, []):
+            upnr = self.state.node_runs[nrid]
+            if upnr.branch_index is None:
+                continue
+            entries.append((upnr.branch_index, {"node_run_id": nrid, "output": upnr.output}))
+        entries.sort(key=lambda t: t[0])
+        return [e for _, e in entries]
+
+    def _select_reducer(self, node: Node) -> Callable[[List[Dict[str, Any]]], Any]:
+        """Single reducer-dispatch point shared by `_run_join` and a `map`
+        node's own implicit reduction (TASK 1/2) -- one place decides which
+        reducer runs and with which kwargs, so join and map can never drift
+        apart on `reduce:` semantics. A registered `run:` callable (custom
+        reducer) wins over the built-in `reduce:` block, matching the
+        Phase 1 precedence `_run_join` already had."""
+        if node.run and script_registry.is_registered(node.run):
+            return script_registry.get(node.run)
+        reduce_spec = node.reduce or {}
+        reduce_type = reduce_spec.get("type", "concat")
+        if reduce_type == "top_k":
+            k = int(reduce_spec.get("k", 3))
+            return lambda envs: script_registry.top_k(envs, k=k)
+        if reduce_type == "first_k":
+            k = int(reduce_spec.get("k", 3))
+            return lambda envs: script_registry.first_k(envs, k=k)
+        if reduce_type == "majority":
+            key = reduce_spec.get("key")
+            return lambda envs: script_registry.majority(envs, key=key)
+        if reduce_type == "best":
+            key = reduce_spec.get("key", "score")
+            return lambda envs: script_registry.best(envs, key=key)
+        return script_registry.concat
+
+    def _run_branches(self, fanout_node_id: str, branch_node: Node, node: Optional[Node] = None) -> None:
+        """Execute this fanout/map node's freshly-materialized branch
+        node-runs.
+
+        TASK 4: branch node-runs are pool-eligible. `max_parallel_nodes <=
+        1` runs this exactly as Phase 1/2 did -- one branch at a time, in
+        index order. `> 1` marks+checkpoints each about-to-run wave of up
+        to `max_parallel_nodes` branches BEFORE submitting any of them
+        (same checkpoint-before-dispatch invariant as the top-level batch
+        loop), runs the wave through a bounded `ThreadPoolExecutor`, folds
+        results back in index order, then moves to the next wave.
+
+        TASK 2 short-circuit (`map` + `reduce: {type: first_k,
+        short_circuit: true}`): once `k` branches have SUCCEEDED, every
+        remaining NOT-YET-STARTED branch is marked `skipped`
+        (`{"skipped_reason": "short_circuit"}`) instead of being dispatched.
+        This is checked between waves (or before each branch, in the
+        sequential path) -- it is COOPERATIVE cancellation only. A branch
+        already running (already in a submitted wave, or already the
+        subject of `_run_one_branch` in the sequential path) always runs to
+        completion; nothing here kills in-flight work.
+        """
+        reduce_spec = (node.reduce or {}) if node is not None else {}
+        short_circuit = (
+            node is not None
+            and node.kind == "map"
+            and reduce_spec.get("type") == "first_k"
+            and bool(reduce_spec.get("short_circuit"))
+        )
+        sc_k = int(reduce_spec.get("k", 3)) if short_circuit else None
+
+        branch_nrs = [
+            self.state.node_runs[nrid]
+            for nrid in self.state.node_runs_by_node.get(fanout_node_id, [])
+            if self.state.node_runs[nrid].branch_index is not None
+        ]
+
+        def succeeded_count() -> int:
+            return sum(1 for b in branch_nrs if b.status == "succeeded")
+
+        def skip_short_circuited(skip_nr: NodeRun) -> None:
+            skip_nr.status = "skipped"
+            skip_nr.started_at = _ts()
+            skip_nr.ended_at = skip_nr.started_at
+            skip_nr.output = {"skipped_reason": "short_circuit"}
+            disp_id = f"{fanout_node_id}#{skip_nr.branch_index}"
+            kind = skip_nr.branch_node.kind if skip_nr.branch_node else "agent"
+            events.start_event(self.run_id, skip_nr.node_run_id, disp_id, kind)
+            events.end_event(self.run_id, skip_nr.node_run_id, disp_id, "skipped")
+
+        if self.max_parallel_nodes <= 1:
+            for one_nr in branch_nrs:
+                if one_nr.status != "pending":
+                    continue
+                if short_circuit and succeeded_count() >= sc_k:
+                    skip_short_circuited(one_nr)
+                    continue
+                self._run_one_branch(one_nr)
+            return
+
+        # TASK 4 concurrent path: dispatch in bounded waves (rather than
+        # submitting every pending branch at once) so short_circuit can
+        # observe the succeeded-count BETWEEN waves and skip branches that
+        # would otherwise never even need to start -- submitting everything
+        # up-front would defeat the whole point of short_circuit.
+        pending = [b for b in branch_nrs if b.status == "pending"]
+        while pending:
+            if short_circuit and succeeded_count() >= sc_k:
+                for one_nr in pending:
+                    skip_short_circuited(one_nr)
+                break
+            wave = pending[: self.max_parallel_nodes]
+            pending = pending[self.max_parallel_nodes :]
+            for one_nr in wave:
+                self._mark_branch_running(one_nr)
+            self._checkpoint()
+            with ThreadPoolExecutor(max_workers=max(1, self.max_parallel_nodes)) as ex:
+                futures = [ex.submit(self._branch_compute, one_nr) for one_nr in wave]
+                for fut in futures:
+                    fut.result()
+            for one_nr in wave:
+                self._finish_branch(one_nr)
+            self._checkpoint()
+
+    def _mark_branch_running(self, nr: NodeRun) -> None:
+        fanout_node_id = nr.parent_fanout or nr.node_id
+        kind = nr.branch_node.kind if nr.branch_node is not None else nr.kind
+        nr.status = "running"
+        nr.started_at = _ts()
+        events.start_event(self.run_id, nr.node_run_id, f"{fanout_node_id}#{nr.branch_index}", kind)
 
     def _run_one_branch(self, nr: NodeRun) -> None:
-        """Execute one persisted fanout branch leaf without re-running its parent."""
+        """Execute one persisted fanout/map branch leaf without re-running
+        its parent (sequential path: max_parallel_nodes <= 1, or a single
+        branch resurfaced `pending` by an `on_fail: retry` reset and picked
+        up by the normal ready-set walk). Marks running + checkpoints
+        BEFORE compute -- the same checkpoint-before-dispatch invariant the
+        pool path (`_run_branches`) gives a whole wave."""
+        self._mark_branch_running(nr)
+        self._checkpoint()
+        self._branch_compute(nr)
+        self._finish_branch(nr)
+
+    def _branch_compute(self, nr: NodeRun) -> None:
+        """Execute one branch's actual work into `nr` only -- safe to call
+        from a worker thread concurrently with OTHER branches'
+        `_branch_compute` calls (each touches only its own NodeRun object,
+        plus its own node_run_id-keyed events.jsonl/output.json files, so
+        two branches never contend on the same file).
+
+        The ENTIRE body (ctx build, template render, dispatch) is inside
+        one try/except -- unlike Phase 1/2's `_run_one_branch`, which only
+        guarded the kind-dispatch -- because this now runs inside a
+        `concurrent.futures.Future`; an uncaught exception here would
+        propagate out of `future.result()` in the fold loop and crash the
+        whole batch instead of just failing this one branch.
+        """
         node = nr.branch_node
-        fanout_node_id = nr.parent_fanout or nr.node_id
         if node is None:
             nr.status = "failed"
             nr.error = {
@@ -817,36 +1153,31 @@ class Driver:
                 "message": "branch leaf template not recoverable from checkpoint",
                 "retriable": False,
             }
-            if nr.node_id not in self.state.failed:
-                self.state.failed.append(nr.node_id)
             return
-
-        item = nr.branch_item if nr.branch_item is not None else self._branch_items.get(nr.node_run_id)
-        ctx = self._build_ctx(node)
-        ctx["branch"] = item
-        # Render against a copy: the persisted branch leaf remains a reusable
-        # template for any subsequent retry/resume.
-        from ..expr import render
-        import copy as _copy
-
-        bnode = _copy.deepcopy(node)
-        rendered_input: Dict[str, Any] = {}
-        if bnode.spec and bnode.spec.input:
-            for k, v in bnode.spec.input.items():
-                rendered_input[k] = render(v, ctx)
-        if bnode.spec and isinstance(bnode.spec.prompt, str):
-            bnode.spec.prompt = render(bnode.spec.prompt, ctx)
-        ctx["input"] = rendered_input or {"item": item}
-        nr.status = "running"
-        nr.started_at = _ts()
-        events.start_event(self.run_id, nr.node_run_id, f"{fanout_node_id}#{nr.branch_index}", bnode.kind)
-        self._checkpoint()
         try:
+            item = nr.branch_item if nr.branch_item is not None else self._branch_items.get(nr.node_run_id)
+            ctx = self._build_ctx(node)
+            ctx["branch"] = item
+            # Render against a copy: the persisted branch leaf remains a
+            # reusable template for any subsequent retry/resume.
+            from ..expr import render
+            import copy as _copy
+
+            bnode = _copy.deepcopy(node)
+            rendered_input: Dict[str, Any] = {}
+            if bnode.spec and bnode.spec.input:
+                for k, v in bnode.spec.input.items():
+                    rendered_input[k] = render(v, ctx)
+            if bnode.spec and isinstance(bnode.spec.prompt, str):
+                bnode.spec.prompt = render(bnode.spec.prompt, ctx)
+            ctx["input"] = rendered_input or {"item": item}
+
             if bnode.kind == "agent":
                 result = self.worker.run_node(bnode, ctx)
                 nr.output = result.get("output")
                 nr.cost_usd = float(result.get("cost_usd", 0.0) or 0.0)
-                self.state.cost_usd += nr.cost_usd
+                nr.tokens_in = int(result.get("tokens_in", 0) or 0)
+                nr.tokens_out = int(result.get("tokens_out", 0) or 0)
                 # TASK 7: same effective_model/provider capture as _run_agent.
                 nr.effective_model = result.get("effective_model")
                 nr.effective_provider = result.get("effective_provider")
@@ -865,9 +1196,23 @@ class Driver:
         except Exception as exc:
             nr.status = "failed"
             nr.error = {"code": "AGENT", "message": str(exc), "retriable": True}
-            if nr.node_id not in self.state.failed:
-                self.state.failed.append(nr.node_id)
+
+    def _finish_branch(self, nr: NodeRun) -> None:
+        """Main-thread-only fold for one branch: end event, RunState
+        aggregate mutation, output store, on_fail dispatch. Called once per
+        branch, after `_branch_compute` completes (sequentially, or after
+        its pool future resolves)."""
+        fanout_node_id = nr.parent_fanout or nr.node_id
+        node = nr.branch_node
         nr.ended_at = _ts()
+        with self._agg_lock:
+            self.state.cost_usd += nr.cost_usd
+            self.state.tokens_in += nr.tokens_in
+            self.state.tokens_out += nr.tokens_out
+            if nr.status == "failed" and nr.node_id not in self.state.failed:
+                self.state.failed.append(nr.node_id)
+        if nr.cost_usd:
+            events.cost_event(self.run_id, nr.node_run_id, nr.cost_usd)
         events.end_event(
             self.run_id,
             nr.node_run_id,
@@ -878,6 +1223,8 @@ class Driver:
         )
         if nr.output is not None:
             fs.store_node_output(self.run_id, nr.node_run_id, nr.output)
+        if nr.status == "failed" and node is not None:
+            self._apply_on_fail(nr, node)
 
     def _make_branch_node(self, fanout: Node) -> Node:
         """Construct a Node from the fanout branch template."""
@@ -893,34 +1240,26 @@ class Driver:
         return node
 
     def _run_join(self, nr: NodeRun, node: Node) -> None:
-        """Reduce upstream branch outputs (concat/top_k)."""
+        """Reduce upstream branch outputs via the shared reducer-dispatch
+        (`_select_reducer` -- TASK 1/2), the same dispatch a `map` node
+        uses for its own implicit reduction."""
         upstream_ids = node.from_ or [e.from_ for e in self.incoming.get(node.id, [])]
         # collect upstream node-run envelopes. For a fanout/map upstream, collect
-        # only the BRANCH node-runs (branch_index is not None), not the fanout
-        # node's own envelope (which holds the branch node_run_id list, not data).
+        # only the BRANCH node-runs (via `_branch_envelopes`) -- not the fanout/map
+        # node's own envelope (which holds the branch node_run_id list / reduced
+        # value, not branch data).
         envelopes: List[Dict[str, Any]] = []
         for up in upstream_ids:
             up_node = self.nodes.get(up)
-            for nrid in self.state.node_runs_by_node.get(up, []):
-                upnr = self.state.node_runs[nrid]
-                if up_node and up_node.kind in ("fanout", "map"):
-                    if upnr.branch_index is None:
-                        continue  # skip the fanout node's own envelope
-                envelopes.append({"node_run_id": nrid, "output": upnr.output})
-        # select reducer
-        reduce_type = (node.reduce or {}).get("type", "concat") if node.reduce else "concat"
-        if node.run and script_registry.is_registered(node.run):
-            nr.output = script_registry.get(node.run)(envelopes)
-        elif reduce_type == "top_k":
-            from .scripts import top_k
-            k = int((node.reduce or {}).get("k", 3))
-            nr.output = top_k(envelopes, k=k)
-        else:
-            from .scripts import concat
-            nr.output = concat(envelopes)
+            if up_node is not None and up_node.kind in ("fanout", "map"):
+                envelopes.extend(self._branch_envelopes(up))
+            else:
+                for nrid in self.state.node_runs_by_node.get(up, []):
+                    upnr = self.state.node_runs[nrid]
+                    envelopes.append({"node_run_id": nrid, "output": upnr.output})
+        reducer = self._select_reducer(node)
+        nr.output = reducer(envelopes)
         nr.status = "succeeded"
-        if node.id not in self.state.succeeded:
-            self.state.succeeded.append(node.id)
 
     def _run_gate(self, nr: NodeRun, node: Node) -> None:
         """Park the run at a gate (F7: RunEnvelope.status == awaiting_gate)."""
@@ -937,14 +1276,243 @@ class Driver:
         notif = self._make_notification("awaiting_gate", gate_id=node.id)
         self._fire_notify(notif, workflow_notify=self.ir.notify, gate_notify=(gate.notify if gate else True))
 
+    # ---- TASK 4 (Phase 3): bounded-concurrency ready-set batch dispatch ---
+
+    def _classify_ready(self, nr: NodeRun) -> str:
+        """'pool' (top-level agent/script node-runs, and ANY fanout/map
+        branch node-run) vs 'sequential' (fanout/map/join/gate, or an
+        unrecognized node id) -- see `_run_ready_batch`'s docstring for why
+        the split is drawn exactly here."""
+        if nr.branch_index is not None:
+            return "pool"
+        node = self.nodes.get(nr.node_id)
+        if node is not None and node.kind in ("agent", "script"):
+            return "pool"
+        return "sequential"
+
+    def _run_ready_batch(self, ready: List[NodeRun]) -> bool:
+        """Execute one ready-set batch under bounded concurrency
+        (`max_parallel_nodes > 1`; the <= 1 case never calls this — see
+        `execute()`).
+
+        Pool-eligible node-runs — top-level `agent`/`script` node-runs, and
+        any fanout/map BRANCH node-run (including one resurfaced `pending`
+        by an `on_fail: retry` reset) — run concurrently through a
+        `ThreadPoolExecutor` bounded by `max_parallel_nodes`.
+        `fanout`/`map`/`join`/`gate` node-runs mutate
+        `self.state.node_runs`/`node_runs_by_node` (or `self.state.status`,
+        for a gate) directly and MUST stay on the main thread — both
+        because that mutation isn't lock-protected, and because a fanout
+        materializing new branch node-runs while a pool worker thread
+        concurrently iterates that very same dict in `_build_ctx` would be
+        a "dictionary changed size during iteration" bug waiting to happen.
+
+        So this batch runs in two strict phases:
+          1. ALL pool-eligible items are submitted and FULLY AWAITED first
+             — they only ever *read* `node_runs`/`node_runs_by_node`
+             (building template ctx), so running them concurrently with
+             each other is safe.
+          2. Sequential (structural) items then run one at a time on the
+             main thread, with nothing else touching shared state at the
+             same time.
+
+        CHECKPOINT-BEFORE-DISPATCH (non-negotiable): every node-run in the
+        batch — pool or sequential — is marked `running` (+ start event)
+        and the WHOLE batch is checkpointed in this main thread BEFORE any
+        future is submitted and before any sequential item's body runs. A
+        crash right after that checkpoint leaves every dispatched node-run
+        durably `running` on disk, which F6's resume-reconciliation already
+        treats as safely requeue-able.
+
+        Results are folded into shared RunState aggregates (cost/tokens/
+        succeeded/failed) one node-run at a time, in the ORIGINAL
+        ready-set order (not completion order, and not "pool items then
+        sequential items" order) — see the fold loop below — so two runs
+        over identical inputs produce identically-ordered state regardless
+        of real-world thread scheduling. Budget is re-checked after each
+        fold, same as the sequential path, so a trip stops the fold loop
+        before any further node-run's result is applied.
+
+        An `on_fail: fail_run` hit during folding sets `self._aborted` +
+        `self.state.status = "failed"` immediately (see `_abort_run`), but
+        by the time we're folding, every item in THIS batch has already
+        been computed (phase 1/2 above already ran to completion) — there
+        is nothing left in this batch to "not dispatch". So, unlike the
+        strictly-sequential path (which stops before even starting the
+        next ready item), folding continues for the REST of this
+        already-computed batch, so the final state accurately reflects
+        every node-run that actually ran; only the OUTER `execute()` loop
+        stops STARTING a new batch once `self._aborted` is set.
+
+        Returns True if the budget circuit-breaker tripped during this
+        batch.
+        """
+        kinds: Dict[int, str] = {id(nr): self._classify_ready(nr) for nr in ready}
+
+        # Unknown top-level node id: fail immediately, exactly like the
+        # sequential `_run_node_run` guard -- no running state, no event.
+        for nr in ready:
+            if nr.branch_index is None and self.nodes.get(nr.node_id) is None:
+                nr.status = "failed"
+                nr.error = {"code": "VERIFY", "message": f"unknown node {nr.node_id}", "retriable": False}
+                kinds[id(nr)] = "unknown"
+
+        dispatchable = [nr for nr in ready if kinds[id(nr)] != "unknown"]
+
+        # ---- phase 0: mark EVERY dispatchable node-run running, THEN one
+        #      checkpoint, BEFORE any future is submitted. --------------------
+        for nr in dispatchable:
+            if nr.branch_index is not None:
+                self._mark_branch_running(nr)
+            else:
+                self._mark_top_level_running(nr, self.nodes[nr.node_id])
+        self._checkpoint()
+
+        pool_items = [nr for nr in dispatchable if kinds[id(nr)] == "pool"]
+        sequential_items = [nr for nr in dispatchable if kinds[id(nr)] == "sequential"]
+
+        # ---- phase 1: pool items, submitted together, fully awaited -------
+        if pool_items:
+            with ThreadPoolExecutor(max_workers=max(1, self.max_parallel_nodes)) as ex:
+                futures = {}
+                for nr in pool_items:
+                    if nr.branch_index is not None:
+                        futures[nr.node_run_id] = ex.submit(self._branch_compute, nr)
+                    else:
+                        futures[nr.node_run_id] = ex.submit(self._top_level_compute, nr, self.nodes[nr.node_id])
+                for nr in pool_items:
+                    futures[nr.node_run_id].result()
+
+        # ---- phase 2: sequential (structural) items, main thread only -----
+        for nr in sequential_items:
+            self._top_level_compute(nr, self.nodes[nr.node_id])
+
+        # ---- fold, strictly in original ready-set order --------------------
+        budget_tripped = False
+        for nr in ready:
+            kind = kinds[id(nr)]
+            if kind == "unknown":
+                if nr.node_id not in self.state.failed:
+                    self.state.failed.append(nr.node_id)
+                continue
+            if nr.branch_index is not None:
+                self._finish_branch(nr)
+            else:
+                self._finish_top_level(nr, self.nodes[nr.node_id])
+            self._checkpoint()
+            self._check_budget()
+            if self.state.status == "paused" and not budget_tripped:
+                # Persist the pause immediately -- same rationale as the
+                # sequential path (see execute()'s docstring comment there).
+                self._checkpoint()
+                budget_tripped = True
+        return budget_tripped
+
+    # ---- Phase 3 §A: on_fail policy dispatch -------------------------------
+
+    def _fail_policy_for(self, nr: NodeRun) -> str:
+        """Resolve the effective on_fail policy for a just-failed
+        node-run. For a branch, the branch TEMPLATE node's own `on_fail`
+        wins if set; otherwise it falls back to the parent fanout/map
+        node's policy (which itself defaults to skip_downstream via
+        `Node.fail_policy`). For a top-level node-run, it's simply that
+        node's own policy."""
+        if nr.branch_index is not None:
+            if nr.branch_node is not None and nr.branch_node.on_fail:
+                return nr.branch_node.on_fail
+            parent = self.nodes.get(nr.parent_fanout or "")
+            return parent.fail_policy if parent is not None else DEFAULT_ON_FAIL
+        node = self.nodes.get(nr.node_id)
+        return node.fail_policy if node is not None else DEFAULT_ON_FAIL
+
+    def _apply_on_fail(self, nr: NodeRun, node: Node) -> None:
+        """React to a just-failed node-run per its effective on_fail
+        policy. Called once from `_finish_top_level`/`_finish_branch`,
+        after end-of-node bookkeeping (event fired, output stored) so
+        retry/fail_run see a fully-finalized failure. `node` is the failed
+        node-run's OWN node/branch-template (used for F6's side_effects
+        check and the retry attempts budget); the POLICY itself may come
+        from a DIFFERENT node (a branch falls back to its parent fanout/map
+        -- see `_fail_policy_for`)."""
+        policy = self._fail_policy_for(nr)
+        if policy in ("skip_downstream", "continue"):
+            # skip_downstream: unchanged Phase 1/2 cascade, via
+            # _edge_state/_resolve_from_upstreams treating a failed
+            # upstream as blocked.
+            # continue: handled structurally in those same two methods (the
+            # failure doesn't block downstream) -- nothing to do here.
+            return
+        if policy == "fail_run":
+            self._abort_run(nr, node)
+            return
+        if policy == "retry":
+            self._maybe_retry(nr, node)
+            return
+
+    def _abort_run(self, nr: NodeRun, node: Node) -> None:
+        """on_fail: fail_run -- a declared hard stop. Sets the run's
+        terminal status directly to `failed` (never softened to `partial`
+        by `_finalize`, even if other nodes already succeeded earlier in
+        this same run -- see `_finalize`'s `self._aborted` check) and flips
+        `self._aborted` so the main dispatch loop (sequential or pooled
+        batch) stops STARTING further ready node-runs / batches for the
+        rest of this `execute()` call."""
+        self.state.status = "failed"
+        self._aborted = True
+        events.run_event(self.run_id, {"event": "aborted", "reason": "ON_FAIL", "node_id": nr.node_id})
+        self._checkpoint()
+
+    def _maybe_retry(self, nr: NodeRun, node: Node) -> None:
+        """on_fail: retry -- bounded re-run.
+
+        F6 hard requirement: a `side_effects: external` node (or branch
+        template) must NEVER be auto-retried -- the entire point of F6 is
+        not silently re-running side effects. It stays failed with its
+        existing error, falling through to skip_downstream cascade
+        semantics, exactly like an exhausted retry.
+
+        The attempt bound is `node.attempts` (the failed node-run's OWN
+        node/branch-template value) -- default 2 TOTAL attempts when
+        unset. `NodeRun.attempt` is persisted on the checkpoint (see
+        `NodeRun.to_dict`/`from_dict`), so a resume() cannot reset the
+        counter and loop forever.
+        """
+        if node.side_effects == "external":
+            return  # F6: never auto-retry a side-effecting node/branch.
+        attempts_budget = node.attempts if node.attempts else 2
+        if nr.attempt >= attempts_budget:
+            return  # exhausted -> stays failed -> skip_downstream cascade
+        nr.attempt += 1
+        nr.status = "pending"
+        nr.error = None
+        nr.started_at = None
+        nr.ended_at = None
+        nr.output = None
+        if nr.node_id in self.state.failed:
+            self.state.failed.remove(nr.node_id)
+        events.run_event(
+            self.run_id,
+            {
+                "event": "retry",
+                "node_id": nr.node_id,
+                "node_run_id": nr.node_run_id,
+                "attempt": nr.attempt,
+            },
+        )
+        self._checkpoint()
+
     # ---- resume / budget / finalize ---------------------------------------
 
     def _check_budget(self) -> None:
         """TASK 5: budget circuit-break. Called at the top of the main loop
         AND after every node-run (cost accrues mid-loop) so a trip is caught
         before any further node starts, not just at loop boundaries.
-        Idempotent -- a run already paused/gate-parked is left alone."""
-        if self.state.status in ("paused", GATE_PARKED):
+        Idempotent -- a run already paused/gate-parked is left alone. TASK 3
+        on_fail: fail_run: also a no-op once `self._aborted` -- otherwise a
+        budget trip observed right after `_abort_run` already set
+        `state.status = "failed"` would silently overwrite it back to
+        "paused", undoing the hard-stop `_abort_run` just committed."""
+        if self.state.status in ("paused", GATE_PARKED) or self._aborted:
             return
         if self.max_budget_usd and self.state.cost_usd > self.max_budget_usd:
             self.state.status = "paused"
@@ -1014,6 +1582,13 @@ class Driver:
     def _finalize(self) -> None:
         if self.state.status == GATE_PARKED:
             pass  # leave awaiting_gate; its own park notification already fired
+        elif self._aborted:
+            # TASK 3 on_fail: fail_run -- a declared hard stop. `_abort_run`
+            # already set state.status = "failed" directly; that must WIN
+            # over the succeeded/failed framing below -- a fail_run node is
+            # a hard stop, never softened to "partial" just because other
+            # nodes had already succeeded earlier in this same run.
+            pass
         elif self.state.status == "paused":
             # TASK 5: a budget pause must WIN over the failed/succeeded
             # framing below -- checked before `self.state.failed` so a node
@@ -1078,6 +1653,14 @@ class Driver:
             failed=list(self.state.failed),
             skipped=list(self.state.skipped),
             cost_usd=self.state.cost_usd,
+            # Phase 3: a budget pause is the one terminal status where the
+            # operator needs a number and a command, not just a verdict --
+            # Notification.effective_detail() turns these two into "cost $X
+            # exceeded the $Y cap; resume with --max-budget-usd <higher>".
+            # Both are None for every other status, which is exactly when
+            # effective_detail() falls back to the plain summary line.
+            pause_reason=self.state.pause_reason,
+            max_budget_usd=self.max_budget_usd,
         )
 
     def _fire_notify(self, notif: Any, *, workflow_notify: Any = None, gate_notify: Any = None) -> None:
@@ -1116,6 +1699,14 @@ class Driver:
             "started_at": self.state.started_at,
             "ended_at": self.state.ended_at,
             "cost_usd": self.state.cost_usd,
+            # TASK 5: tokens travel with cost everywhere cost travels. A run
+            # envelope that reports a dollar figure but not the token counts
+            # backing it is the report an operator cannot audit -- and against
+            # the real live path tokens are the number we can always recover,
+            # while cost depends on the child exposing a price (see
+            # live.extract_cost_and_tokens).
+            "tokens_in": self.state.tokens_in,
+            "tokens_out": self.state.tokens_out,
             "final_output_ref": f"runs/{self.run_id}/run_output.json",
             "resume_hint": resume_hint,
         }
@@ -1146,10 +1737,15 @@ def run(
 ) -> Dict[str, Any]:
     """Execute a verified IR with a worker (default FakeWorker).
 
-    Phase 1 executes nodes and fanout branches strictly sequentially
-    (deterministic, checkpoint-safe). ``max_parallel_nodes`` is accepted for
-    config/forward-compat but is a reserved no-op; bounded concurrency is a
-    Phase 2 deliverable.
+    ``max_parallel_nodes <= 1`` runs nodes and fanout/map branches strictly
+    sequentially (deterministic, checkpoint-safe) -- the Phase 1/2 behavior,
+    unchanged. ``> 1`` (TASK 4, Phase 3) bounds real concurrency for
+    pool-eligible node-runs (top-level ``agent``/``script`` node-runs, and
+    fanout/map branch node-runs) via a
+    ``concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel_nodes)``;
+    ``fanout``/``map``/``join``/``gate`` node-runs always run on the main
+    thread. See ``Driver._run_ready_batch`` for the checkpoint-before-dispatch
+    and result-folding-order guarantees this provides.
 
     ``notifier`` (Phase 2 TASK 3) overrides the module-level default notifier
     (``workflow.runtime.notify.default_notifier()``) for this run only; tests

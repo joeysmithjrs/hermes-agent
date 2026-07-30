@@ -120,21 +120,64 @@ says so rather than pretending).
 
 ---
 
-## Phase 3 — Hardening + adapters
+## Phase 3 — Hardening + adapters — **SHIPPED**
 
-### Scope
-- `map` sugar  
-- richer reducers (`first_k`, `majority`) + `on_fail` policy  
-- kanban **projection** adapter (optional)  
-- cost aggregation dashboard hooks / `workflow list --cost`  
-- trigger-chain helper (scribe → enqueue next run)  
-- Observability polish (`--watch`)  
-- Upstream PR packaging  
+**Branch:** `feat/workflow-dispatch-phase3` · **Log:** `IMPLEMENTATION_LOG.md`
+§Phase 3 · **Surfaces:** `PHASE3_SURFACES.md`
+
+### Scope — shipped
+- ✅ `map` sugar — fanout + implicit reduce in one node; a `map` node's own
+  output IS the reduced branch result, so no `join` node is needed downstream.
+  `fanout` keeps its old output shape for back-compat.
+- ✅ Richer reducers — `first_k`, `majority` (explicit first-appearance
+  tie-break, `tie: true` in the result), `best`, alongside `concat`/`top_k`.
+  `first_k` supports cooperative `short_circuit`.
+- ✅ `on_fail` policy — `fail_run` | `skip_downstream` (default, = Phase 1/2
+  behavior) | `continue` | `retry` (bounded by `attempts`). `retry` is
+  **rejected at compile time** on `side_effects: external` nodes — silently
+  re-running a declared side effect is the exact F6 footgun.
+- ✅ Real `max_parallel_nodes` — bounded thread pool, checkpoint-before-dispatch
+  preserved, deterministic result ordering.
+- ✅ Cost + token rollup — fixes a Phase 2 under-report whose root cause was
+  that `delegate_tool` pops the per-child dollar figure off the returned entry.
+- ✅ `workflow list --cost`, `workflow watch`, `status --watch` (previously an
+  advertised no-op).
+- ✅ Trigger-chain helper — `workflow chain` / `run --from-run`, plus a
+  `workflow_chain` conversation tool.
+- ✅ Schedule sugar — `workflow schedule` prints (or `--register`s) a cron
+  recipe against the existing scheduler. Not a second scheduler.
+- ✅ `spec.tools` subset + `spec.max_turns` — the two fields Phase 2
+  deliberately rejected rather than pretend to enforce.
+- ✅ Output JSON Schema enforcement on agent/script nodes (code `SCHEMA`).
+- ✅ Notify presets/templates + budget-pause resume guidance.
+- ⚠️ Kanban **projection** — interface + config flag shipped, default off;
+  the projector itself is a documented stub. See below.
+
+### Still deferred (and the code says so)
+`spec.profile` and `spec.workspace` remain the only override-only fields: no
+execution path applies a named profile or enforces a workspace isolation
+boundary, so the verifier still rejects them. `spec.deny_tools` compiles to a
+`DENY_TOOLS_UNENFORCED` warning — it restricts nothing.
+
+`spec.tools` is honest about its granularity: it narrows the child to the
+minimal covering **toolsets**, so child ⊆ parent is enforced by
+`tools.delegate_tool` and every requested tool is present, but sibling tools in
+the same toolset may come along. It is a scoping convenience, not a security
+boundary — the gate (F3) remains the boundary for side-effecting tools.
+
+Native `triggers:` dispatch stays a host-surface recipe, and gate decisions
+still are not a conversation tool.
 
 ### Acceptance
-1. PM desk skeleton yaml validates and runs with fakes through gate.  
-2. Kanban adapter optional off-by-default.  
-3. Upstream-oriented PR description + footprint ladder narrative ready.  
+1. ✅ Example workflows validate and run end-to-end under `FakeWorker`
+   (`examples-phase3-{map,onfail,tools}.yaml`), including through a gate.
+2. ✅ Kanban adapter optional and off by default — **but shipped as a stub, not
+   a live integration.** Hermes kanban tasks are *dispatchable work items*:
+   creating a card spawns a real agent run, which would make the board the
+   execution bus the design explicitly forbids. A passive card kind in
+   `hermes_cli/kanban_db.py` (sacred core) is the prerequisite. `project_run()`
+   returns a specific `reason` rather than faking success.
+3. ✅ Upstream-oriented PR description + footprint ladder narrative ready.
 
 ---
 
