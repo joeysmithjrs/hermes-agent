@@ -184,7 +184,10 @@ def _check_node(
             err("PROMPT", n.id, "agent node missing prompt")
         else:
             _check_template_refs(n, ir, err)
-        # F2: override-only fields the Phase 1 inherit path cannot honor
+        # F2: override-only fields no execution path honors yet. model/provider
+        # are NOT in this list any more — Phase 2 honors them via the
+        # LiveWorker child-construction override path (workflow.runtime.live);
+        # see ir.PHASE2_OVERRIDE_FIELDS.
         if n.spec:
             for f in OVERRIDE_ONLY_FIELDS:
                 val = getattr(n.spec, f, None)
@@ -197,15 +200,16 @@ def _check_node(
                         warn(
                             "PHASE1_OVERRIDE",
                             n.id,
-                            f"agent node sets override-only field '{f}' which the Phase 1 "
-                            f"inherit path cannot enforce (Phase 2 subprocess override path)",
+                            f"agent node sets override-only field '{f}' which no execution "
+                            f"path enforces yet (Phase 2 honors spec.model/spec.provider only)",
                         )
                     else:
                         err(
                             "PHASE1_OVERRIDE",
                             n.id,
-                            f"agent node sets override-only field '{f}'; Phase 1 inherit path "
-                            f"cannot honor it — remove it or set workflow.phase1_warn_overrides",
+                            f"agent node sets override-only field '{f}'. Phase 2 honors "
+                            f"spec.model/spec.provider; '{f}' is still not enforced by any "
+                            f"execution path — remove it or set workflow.phase1_warn_overrides",
                         )
         # F6: side-effecting agent node must declare side_effects: external
         if _has_live_tool(n):

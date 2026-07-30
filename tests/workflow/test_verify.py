@@ -331,15 +331,17 @@ triggers:
 
 
 def test_f2_agent_override_fields_rejected_strict(wf_home):
-    """F2 (reject path): an agent setting tools/model/profile/max_turns/workspace
-    is rejected by default (Phase 1 inherit path cannot honor them).
+    """F2 (reject path): an agent setting tools/profile/max_turns/workspace
+    is rejected by default (no execution path enforces them yet).
+
+    model/provider are NOT in this list any more — Phase 2 honors them via
+    the LiveWorker override path (see test_phase2_model_provider_not_rejected).
 
     Uses a non-live tool (web_search) so only PHASE1_OVERRIDE fires, not the
     live-tool SIDE_EFFECTS rule.
     """
     for field_yaml in [
         "tools: [web_search]",
-        "model: fake/model-1",
         "profile: trader",
         "max_turns: 3",
         "workspace: {root: /tmp}",
@@ -367,7 +369,6 @@ def test_f2_agent_override_fields_warn_behind_flag(wf_home):
     is accepted."""
     for field_yaml in [
         "tools: [web_search]",
-        "model: fake/model-1",
         "profile: trader",
         "max_turns: 3",
         "workspace: {root: /tmp}",
@@ -415,8 +416,10 @@ triggers:
 
 def test_model_id_not_checked_residual_debt(wf_home):
     """Residual debt (AUDIT Q7 / SUMMARY): the verifier has NO model-id registry
-    check. A totally unknown model id is NOT rejected for being unknown — the
-    only feedback is the F2 override warning (model is an override-only field).
+    check. A totally unknown model id is NOT rejected for being unknown, nor
+    does it produce any F2 override issue any more — Phase 2 honors
+    spec.model via the LiveWorker override path (ir.PHASE2_OVERRIDE_FIELDS),
+    so it is no longer an OVERRIDE_ONLY_FIELDS member.
 
     This test pins the current lenient behaviour. If a model registry is added
     later, flip this to assert the unknown-model rejection.
@@ -434,7 +437,29 @@ edges: []
 triggers:
   - { kind: manual }
 """
-    # warn mode -> model is a PHASE1_OVERRIDE warning, accepted
     vir = _verify(yaml, warn=True)
     codes = [i.code for i in vir.issues]
-    assert codes == ["PHASE1_OVERRIDE"], codes  # no MODEL / unknown-model error
+    assert codes == [], codes  # no MODEL / unknown-model error, no PHASE1_OVERRIDE either
+
+
+def test_phase2_model_provider_not_rejected(wf_home):
+    """Phase 2: spec.model AND spec.provider together are accepted with zero
+    issues (strict mode, no phase1_warn_overrides) — the LiveWorker override
+    path (ir.PHASE2_OVERRIDE_FIELDS) genuinely honors both fields now, so
+    they no longer belong in OVERRIDE_ONLY_FIELDS."""
+    yaml = """
+workflow: phase2override
+version: 1
+nodes:
+  - id: a
+    kind: agent
+    spec:
+      prompt: do
+      model: fake/model-1
+      provider: fake-provider
+edges: []
+triggers:
+  - { kind: manual }
+"""
+    vir = _verify(yaml, warn=False)
+    assert vir.issues == [], vir.issues

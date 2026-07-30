@@ -6,7 +6,9 @@ directly — guard test: tests/hermes_cli/test_config_read_guard.py).
 
 Defaults:
   enabled: false, max_budget_usd: 10.0, max_parallel_nodes: 4,
-  default_node_timeout_s: 1800, phase1_warn_overrides: false.
+  default_node_timeout_s: 1800, phase1_warn_overrides: false,
+  live_model: null, live_provider: null, notify_target: null,
+  notify_on: [failed, partial, awaiting_gate].
 Does NOT add new required HERMES_* env vars for behavior. MAY use HERMES_HOME
 (existing) and optional HERMES_WORKFLOW_FAKE=1 (documented).
 """
@@ -24,6 +26,14 @@ DEFAULTS: Dict[str, Any] = {
     "store_dir": None,
     "allow_network_scripts": False,
     "phase1_warn_overrides": False,
+    # Phase 2: live agent worker model/provider override of the global
+    # hermes_cli model default (workflow.runtime.live.build_runtime_parent).
+    "live_model": None,
+    "live_provider": None,
+    # Phase 2: run-completion notification target/trigger statuses
+    # (workflow.runtime.notify — owned by another concurrent change).
+    "notify_target": None,
+    "notify_on": ["failed", "partial", "awaiting_gate"],
 }
 
 __all__ = ["load_workflow_config", "DEFAULTS"]

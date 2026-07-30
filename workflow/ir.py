@@ -25,6 +25,8 @@ __all__ = [
     "NODE_KINDS",
     "RUN_STATUSES",
     "NODE_STATUSES",
+    "OVERRIDE_ONLY_FIELDS",
+    "PHASE2_OVERRIDE_FIELDS",
 ]
 
 # design §2.2 — only justified kinds
@@ -64,7 +66,17 @@ NODE_STATUSES = (
 )
 
 # F2 — override-only fields the Phase 1 inherit path cannot honor
-OVERRIDE_ONLY_FIELDS = ("model", "tools", "profile", "max_turns", "workspace")
+OVERRIDE_ONLY_FIELDS = ("tools", "profile", "max_turns", "workspace")
+
+# Phase 2: model/provider ARE now honored via the live worker's child-
+# construction path (workflow.runtime.live.LiveWorker -> resolve_effective_model
+# + tools.delegate_tool.build_child_agent override_* kwargs) — see verify.py's
+# _check_node, which no longer rejects/warns on these two fields. They are
+# deliberately NOT part of OVERRIDE_ONLY_FIELDS above. The remaining
+# OVERRIDE_ONLY_FIELDS (tools/profile/max_turns/workspace) are still not
+# enforced by any execution path, so they are still rejected — we do not
+# silently claim an isolation boundary we don't actually enforce.
+PHASE2_OVERRIDE_FIELDS = ("model", "provider")
 
 
 @dataclass

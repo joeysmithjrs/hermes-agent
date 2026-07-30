@@ -61,6 +61,7 @@ def register_subparser(subparsers) -> None:
     p.add_argument("--retry-failed", action="store_true", help="Re-run failed nodes on resume")
     p.add_argument("--dry-run", action="store_true", help="Compile + plan ready set without spawning")
     p.add_argument("--max-budget-usd", type=float, help="Override run budget cap")
+    p.add_argument("--fake", action="store_true", help="Use the no-LLM FakeWorker instead of a live agent worker")
     p.set_defaults(func=_cmd_run)
 
     # status
@@ -190,13 +191,25 @@ def _cmd_compile(args) -> int:
 def _cmd_run(args) -> int:
     from . import run, resume, status
     from .config import load_workflow_config
-    from .runtime.worker import FakeWorker
 
     cfg = load_workflow_config()
     enabled = bool(cfg.get("enabled", False)) or bool(os.environ.get("HERMES_WORKFLOW_FAKE"))
     if not enabled and not args.dry_run:
         sys.stderr.write("error: workflow is disabled (workflow.enabled: false). Set enabled: true in config.yaml.\n")
         return EXIT_RUNTIME
+
+    # --dry-run is only meaningful for a fresh run: resume() has no plan-only
+    # mode (it mutates checkpoint state — gate unpark, retry resets — before
+    # the walk). Silently dropping the flag here would be the worst outcome:
+    # the operator asks for a free preview and gets a real, billable resume.
+    # Refuse the combination loudly instead.
+    if args.dry_run and args.resume:
+        sys.stderr.write(
+            "error: --dry-run cannot be combined with --resume. A resume has no "
+            "plan-only mode; running it would execute live nodes. Use "
+            "`hermes workflow status <run_id>` to inspect a run without executing it.\n"
+        )
+        return EXIT_USAGE
 
     input_data: Dict[str, Any] = {}
     if args.input:
@@ -206,12 +219,33 @@ def _cmd_run(args) -> int:
             sys.stderr.write(f"error: --input is not valid JSON: {e}\n")
             return EXIT_USAGE
 
+    # Skip worker construction for a plan-only invocation. Note that run()
+    # also skips its own worker default when dry_run is set, so the runtime
+    # provider/credential path is never touched for a --dry-run.
     worker = None
-    if os.environ.get("HERMES_WORKFLOW_FAKE"):
-        worker = FakeWorker()
+    if not args.dry_run:
+        fake_requested = bool(getattr(args, "fake", False)) or bool(os.environ.get("HERMES_WORKFLOW_FAKE"))
+        if fake_requested:
+            from .runtime.worker import FakeWorker
+
+            worker = FakeWorker()
+            sys.stderr.write("workflow: using FakeWorker (no live LLM)\n")
+        else:
+            from .runtime.live import LiveWorker
+
+            worker = LiveWorker()
+            sys.stderr.write(
+                "workflow: using LiveWorker (live agent nodes; model inherited from runtime unless spec.model is set)\n"
+            )
 
     if args.resume:
-        env = resume(args.resume, worker=worker, retry_failed=args.retry_failed, from_node=args.from_node)
+        env = resume(
+            args.resume,
+            worker=worker,
+            retry_failed=args.retry_failed,
+            from_node=args.from_node,
+            max_budget_usd=args.max_budget_usd,
+        )
     else:
         env = run(
             args.path_or_id,
@@ -304,5 +338,7 @@ def _cmd_gate(args) -> int:
     from . import decide_gate
     res = decide_gate(args.run_id, args.gate_id, args.decide, note=args.note)
     sys.stdout.write(json.dumps(res, indent=2, default=str) + "\n")
-    sys.stdout.write("Phase 2: gate runtime unpark is not yet implemented.\n")
+    sys.stdout.write(
+        f"decision recorded; run `hermes workflow run --resume {args.run_id}` to continue past the gate\n"
+    )
     return EXIT_OK

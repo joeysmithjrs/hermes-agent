@@ -1,0 +1,36 @@
+# Phase 2 example — live agent worker, model inherit vs. override.
+#
+# Model/provider resolution (workflow.runtime.live.LiveWorker):
+#   - `research` (below) has NO `spec.model` / `spec.provider` -> it INHERITS
+#     the runtime parent's model/provider (whatever `model.default` /
+#     `workflow.live_model` resolves to at run time).
+#   - `summarize` sets BOTH `spec.model` and `spec.provider` -> the LiveWorker
+#     resolves fresh credentials for that provider (via
+#     hermes_cli.runtime_provider.resolve_runtime_provider) and the child runs
+#     on that provider/model pair instead of the parent's.
+#
+# Validate with: hermes workflow validate examples-phase2-live.yaml
+workflow: phase2_live_demo
+version: 1
+nodes:
+  - id: research
+    kind: agent
+    spec:
+      prompt: "Research {{ input.topic }} and return three bullet points."
+      # no model/provider -> inherits from the live runtime parent
+  - id: summarize
+    kind: agent
+    spec:
+      prompt: "Summarize this research in one sentence: {{ research.output }}"
+      model: "anthropic/claude-sonnet-4"
+      provider: "anthropic"
+  - id: record
+    kind: script
+    run: workflow.examples.echo
+    input:
+      text: "{{ summarize.output }}"
+edges:
+  - { from: research, to: summarize }
+  - { from: summarize, to: record }
+triggers:
+  - { kind: manual }

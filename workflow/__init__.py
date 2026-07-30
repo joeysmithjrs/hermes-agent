@@ -26,6 +26,7 @@ from .verify import verify, verify_ir
 from .config import load_workflow_config
 from .runtime.driver import run as _run, resume as _resume, Driver
 from .runtime.worker import Worker, FakeWorker, DelegateWorker
+from .runtime.live import LiveWorker, build_runtime_parent, RuntimeParentError, resolve_effective_model
 from .store import fs, index, checkpoint
 from .dsl import Workflow, node, gate, expr  # stub (Phase 2)
 
@@ -55,7 +56,26 @@ __all__ = [
     "Worker",
     "FakeWorker",
     "DelegateWorker",
+    "LiveWorker",
+    "build_runtime_parent",
+    "RuntimeParentError",
+    "resolve_effective_model",
 ]
+
+
+def _default_worker() -> Worker:
+    """Default worker when the caller passes ``worker=None``.
+
+    FakeWorker (no live LLM) ONLY when HERMES_WORKFLOW_FAKE is set — that is
+    the one env var that opts a caller into the no-LLM path. Otherwise a real
+    LiveWorker is used; a silent fallback to FakeWorker would mask a workflow
+    that was meant to run live agents actually running canned output.
+    """
+    import os
+
+    if os.environ.get("HERMES_WORKFLOW_FAKE"):
+        return FakeWorker()
+    return LiveWorker()
 
 
 def compile_file(path: str, *, phase1_warn_overrides: Optional[bool] = None) -> VerifiedIR:
@@ -119,7 +139,12 @@ def run(
         vir = compile_file(str(vir_or_path))
     else:
         vir = vir_or_path
-    worker = worker or FakeWorker()
+    # A dry run never reaches a worker (execute() returns the plan before the
+    # walk), so don't construct one — building a LiveWorker for a plan-only
+    # call would put the runtime provider/credential path on the dry-run path
+    # the moment LiveWorker grows any eager initialization.
+    if worker is None and not dry_run:
+        worker = _default_worker()
     return _run(
         vir,
         input=input,
@@ -164,7 +189,21 @@ def status(run_id: str) -> Dict[str, Any]:
     }
 
 
-def resume(run_id: str, *, worker: Optional[Worker] = None, retry_failed: bool = False, from_node: Optional[str] = None) -> Dict[str, Any]:
+def resume(
+    run_id: str,
+    *,
+    worker: Optional[Worker] = None,
+    retry_failed: bool = False,
+    from_node: Optional[str] = None,
+    max_budget_usd: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Resume a crashed/parked run.
+
+    ``max_budget_usd`` matters for a run that stopped with status ``paused``
+    and ``pause_reason: BUDGET``: resuming without raising the cap re-trips the
+    circuit breaker immediately and the run pauses again. Omitted, the config
+    default (``workflow.max_budget_usd``) applies.
+    """
     # Gate the lib path the same way run() does (review P2): otherwise a
     # programmatic caller could resume+execute runs while workflow.enabled=false.
     import os
@@ -174,7 +213,16 @@ def resume(run_id: str, *, worker: Optional[Worker] = None, retry_failed: bool =
         raise PermissionError(
             "workflow is disabled (config workflow.enabled: false); resume cannot execute nodes."
         )
-    return _resume(run_id, worker=worker, retry_failed=retry_failed, from_node=from_node)
+    worker = worker or _default_worker()
+    return _resume(
+        run_id,
+        worker=worker,
+        retry_failed=retry_failed,
+        from_node=from_node,
+        max_budget_usd=(
+            max_budget_usd if max_budget_usd is not None else float(cfg.get("max_budget_usd", 10.0))
+        ),
+    )
 
 
 def cancel(run_id: str) -> Dict[str, Any]:
@@ -198,7 +246,13 @@ def decide_gate(run_id: str, gate_id: str, decision: str, *, note: str = "") -> 
     if decision not in ("approve", "shelve", "modify"):
         raise ValueError(f"invalid gate decision '{decision}' (approve|shelve|modify)")
     fs.atomic_write_json(fs.gate_signal_path(run_id, gate_id), {"gate_id": gate_id, "decision": decision, "note": note, "status": "decided"})
-    return {"run_id": run_id, "gate_id": gate_id, "decision": decision, "note": note, "phase2": "gate runtime unpark is a Phase 2 deliverable"}
+    return {
+        "run_id": run_id,
+        "gate_id": gate_id,
+        "decision": decision,
+        "note": note,
+        "resume_hint": f"hermes workflow run --resume {run_id}",
+    }
 
 
 def _now() -> str:

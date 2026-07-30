@@ -344,3 +344,135 @@ is empty (no unrequested changes present in the final tree); the registry
 contains exactly the 4 pre-existing callables (`concat`, `top_k`,
 `notify_telegram`, `echo`); `driver.py`'s `from ..expr import` line appears
 exactly once. No evidence of the anomaly persisting into the committed state.
+
+---
+
+# Phase 2 Implementation Log
+
+**Orchestrator:** Claude Code (Opus) · **Workers:** sonnet subagents (impl ×2, tests, adversarial review)
+**Branch:** `feat/workflow-dispatch-phase2`
+**Date:** 2026-07-30
+**Status:** Phase 2 shipped (partial — see "Not shipped" below). `run_agent.py` still untouched.
+
+## What shipped
+
+### A. Live worker + model inherit/override
+`workflow/runtime/live.py` (new) — `LiveWorker`, `build_runtime_parent`,
+`resolve_effective_model`, `RuntimeParentError`, `close_runtime_parents`.
+
+The model semantics are the load-bearing part:
+
+| `spec.model` | `spec.provider` | Behavior |
+|---|---|---|
+| unset | unset | **Inherit.** `model=None` is passed to the child builder so `_build_child_agent` applies its own `model or parent_agent.model`. We deliberately do *not* pre-resolve it to a string — that would make the inherit semantic a lookalike rather than the real thing. |
+| set | unset | Override the model only; `override_*` credentials stay `None` so the child keeps the parent's provider and auth. |
+| any | set | Fresh credentials via `resolve_runtime_provider(...)`; all four `override_provider/base_url/api_key/api_mode` are passed together from one resolution. |
+
+`effective_model`/`effective_provider` are recorded on the `NodeRun`, in node
+end-events, and in the output envelope. The reported provider is the
+**canonicalized** one (`resolve_runtime_provider` maps `ollama`/`vllm`/
+`llamacpp` → `custom`), so the audit trail matches what actually ran.
+
+No second agent loop was written. `tools/delegate_tool.py` gained exactly two
+additive public wrappers — `build_child_agent()` and `run_child_agent()` — so
+`workflow/` calls a stable entry point instead of reaching into
+`_build_child_agent` / `_run_child_lifecycle`. Diff is +28/−0.
+
+### B. No silent FakeWorker
+FakeWorker now requires `HERMES_WORKFLOW_FAKE=1` or `--fake` at **every** layer:
+`workflow.run()`/`resume()` (`_default_worker`), the CLI (`_cmd_run`, with a
+stderr banner naming the chosen path), and the raw engine
+(`Driver.worker` → `_default_driver_worker`). The raw driver API sits below the
+`workflow.enabled` authorization check, so its no-worker default *refuses*
+rather than either faking a success or silently starting a billable live run.
+
+### C. Gate unpark
+`resume()` resolves the on-disk decision before the ready-set walk:
+`approve` → gate succeeds on the `approve` port, downstream continues;
+`shelve` → gate `skipped` on the `shelve` port, cascade blocks everything
+downstream; no/partial/unrecognized signal → stays `awaiting_gate`.
+An open gate can never become `succeeded`. `modify` stays parked with an
+honest note that it requires re-authoring the definition — there is no
+"edit a live checkpoint and continue" primitive and we don't pretend otherwise.
+
+### D. Notifications
+`workflow/runtime/notify.py` (new). Best-effort, over the existing
+`tools/send_message_tool.py` path — no new transport. Fires on terminal status
+and on gate park; a gate park does not also fire a terminal notification.
+Never raises; a delivery failure is recorded in the run's event log.
+De-duplicated by a `(status, |succeeded|, |failed|, |skipped|)` fingerprint
+persisted on `RunState`, so repeatedly resuming an already-terminal run does
+not spam the channel once per attempt.
+
+### E. Hardening (latent Phase 1 debts)
+- **Failed-upstream cascade** — downstream of a failed node is `skipped` with a
+  reason instead of hanging `pending` forever. `--retry-failed` walks forward
+  and un-sticks nodes a prior attempt skipped because of that failure.
+- **Budget pause** — trips to `paused` + `pause_reason: BUDGET`, checkpoints
+  immediately, and breaks the loop. Resume makes progress only with a higher
+  `--max-budget-usd`; otherwise it re-pauses without executing anything.
+- **Output schema** — opt-in per node via `spec.output`; uses `jsonschema` when
+  importable, else a minimal structural check. Mismatch → node `failed`,
+  code `SCHEMA`. No `output` block → zero behavior change.
+
+### F. Surfaces
+- `tools/workflow_tools.py` (new) — `workflow_run` / `workflow_status`, in a
+  `workflow` toolset that is in no default bundle, behind a `check_fn`
+  requiring **both** `workflow.enabled` and `workflow.tool_enabled`. Registered
+  via `tools/registry.py`'s existing auto-discovery, so this cost **zero**
+  edits to `run_agent.py`, `toolsets.py`, or `model_tools.py`.
+- Cron + webhook recipes in `PHASE2_SURFACES.md` with a working
+  `examples-phase2-cron.sh` (handles exit code 4 = parked-at-gate as a
+  non-failure). Both reuse host surfaces rather than adding a second scheduler
+  or a duplicate HMAC implementation.
+
+## Not shipped (deliberate, and the verifier says so)
+`spec.tools`, `spec.profile`, `spec.max_turns`, `spec.workspace` remain
+**rejected** (warn-only under `workflow.phase1_warn_overrides`). The live child
+inherits the parent's toolsets; there is no per-node tool narrowing or profile
+isolation yet. Accepting a `tools:` allowlist we cannot enforce would be worse
+than rejecting it. `OVERRIDE_ONLY_FIELDS` was narrowed to exactly those four;
+`PHASE2_OVERRIDE_FIELDS = ("model", "provider")` documents what the live path
+now honors.
+
+Also not shipped: native `triggers:` dispatch, a gate-decision *tool* (an agent
+that can approve its own gates is not a gate), and true dry-run-on-resume —
+`--dry-run` combined with `--resume` is now **rejected** rather than silently
+ignored, which is what it used to be.
+
+## Adversarial review pass (findings fixed in this branch)
+A review subagent attacked the diff after the feature work landed. It found
+three blockers and two highs, all fixed, all with regression tests in
+`tests/workflow/test_phase2_review_fixes.py`:
+
+1. **BLOCKER** — `Driver`/`driver.run()`/`driver.resume()` still defaulted to
+   `FakeWorker()`, so a caller below the authorization boundary got canned
+   `agent[a] done` output reported as `succeeded`. The "no silent fake" fix had
+   only been applied in the convenience wrapper, not the engine.
+2. **BLOCKER** — `--dry-run` was silently dropped on the `--resume` path (CLI
+   *and* the agent-facing tool, whose schema promises "costs nothing"), turning
+   a requested free preview into a real billable resume. Now rejected loudly.
+3. **BLOCKER** — `_PARENT_CACHE` was keyed on call arguments that are always
+   `(None, None)` in the real path, so a long-lived process (gateway, or an
+   agent calling `workflow_run` twice) pinned the first-resolved model and
+   credentials forever — surviving config edits and key rotation. Now keyed on
+   the resolved `(model, provider, base_url, key-digest)`; `close_runtime_parents()`
+   added.
+4. **HIGH** — repeated `resume()` of a terminal run re-fired the terminal
+   notification each time. Fixed with the persisted fingerprint above.
+5. **HIGH** — reported `effective_provider` was the raw spec value, not the
+   canonicalized provider the child actually used, corrupting the audit trail.
+
+**Incident to note:** while building the repro for finding #1, the review agent
+executed a real LiveWorker call against this box's live credentials
+(openrouter, `x-ai/grok-4.5`, ~13.9k input tokens; run
+`wf_7216180c7cb2`), because `~/.hermes/config.yaml` here has
+`workflow.enabled: true` with working keys and the agent was not given an
+isolated `HERMES_HOME`. Small real cost. The orchestration lesson: subagents
+that can reach `workflow.run()` need a sandboxed `HERMES_HOME`, the same way
+the test suite does.
+
+## Tests
+`pytest tests/workflow tests/tools/test_workflow_tools.py -q` → **149 passed**
+(67 pre-existing Phase 1 + 82 new). Hermetic: no network, no live LLM, no real
+config. `ruff --select PLW1514` clean on all touched files (Windows footgun).
