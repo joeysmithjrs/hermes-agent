@@ -122,6 +122,36 @@ def register_subparser(subparsers) -> None:
     p.add_argument("--fake", action="store_true", help="Pass --fake through to the scheduled `hermes workflow run`")
     p.set_defaults(func=_cmd_schedule)
 
+    # register (catalog)
+    p = wf_sub.add_parser("register", help="Register a workflow YAML as a versioned catalog recipe")
+    p.add_argument("--id", dest="catalog_id", required=True, help="Catalog id (e.g. desk-autonomy)")
+    p.add_argument("--from-file", dest="from_file", required=True, help="Path to the workflow YAML to snapshot")
+    p.add_argument("--tags", help="Comma-separated tags")
+    p.add_argument("--owner", help="Owner label (free text)")
+    p.add_argument("--description", help="One-line description")
+    p.add_argument("--param-schema", dest="param_schema", help="JSON Schema for --params, as JSON or @file.json")
+    p.add_argument("--json", dest="as_json", action="store_true", help="Emit the created entry as JSON")
+    p.set_defaults(func=_cmd_register)
+
+    # list-catalog
+    p = wf_sub.add_parser("list-catalog", help="List registered catalog recipes")
+    p.add_argument("--tags", help="Only entries carrying ALL of these comma-separated tags")
+    p.add_argument("--id", dest="catalog_id", help="Only this catalog id")
+    p.add_argument("--all-versions", action="store_true", help="Show every version (default: latest per id)")
+    p.add_argument("--json", dest="as_json", action="store_true", help="Emit JSON instead of a table")
+    p.set_defaults(func=_cmd_list_catalog)
+
+    # run-catalog
+    p = wf_sub.add_parser("run-catalog", help="Run a registered catalog recipe")
+    p.add_argument("catalog_id")
+    p.add_argument("--version", type=int, help="Registered version (default: latest)")
+    p.add_argument("--params", help="JSON object substituted into {{ params.* }} placeholders")
+    p.add_argument("--input", help="JSON input string for the run (merged over the params dict)")
+    p.add_argument("--dry-run", action="store_true", help="Compile + plan ready set without spawning")
+    p.add_argument("--max-budget-usd", type=float, help="Override run budget cap")
+    p.add_argument("--fake", action="store_true", help="Use the no-LLM FakeWorker instead of a live agent worker")
+    p.set_defaults(func=_cmd_run_catalog)
+
     # cancel
     p = wf_sub.add_parser("cancel", help="Cancel a run")
     p.add_argument("run_id")
@@ -148,7 +178,10 @@ def register_subparser(subparsers) -> None:
 def cmd_workflow(args) -> int:
     """Top-level dispatch when no sub-subcommand matched."""
     if not getattr(args, "workflow_command", None):
-        sys.stderr.write("usage: hermes workflow <validate|compile|run|status|watch|logs|list|cancel|doctor|gate|chain|schedule> ...\n")
+        sys.stderr.write(
+            "usage: hermes workflow <validate|compile|run|status|watch|logs|list|cancel|doctor|"
+            "gate|chain|schedule|register|list-catalog|run-catalog> ...\n"
+        )
         return EXIT_USAGE
     fn = getattr(args, "func", None)
     if fn is None:
@@ -547,6 +580,171 @@ def _cmd_chain(args) -> int:
         allow_incomplete=args.allow_incomplete,
     )
     return _cmd_run(run_args)
+
+
+# ---- catalog (post-Phase-3) ------------------------------------------------
+
+
+def _parse_json_arg(raw: Optional[str], flag: str) -> Any:
+    """Parse a JSON CLI argument, accepting the ``@path/to/file.json`` form.
+
+    Returns None for an absent value. Raises _VerifyExit-free ValueError so the
+    caller can map it to EXIT_USAGE (a malformed flag is the operator's typo,
+    not a runtime failure).
+    """
+    if not raw:
+        return None
+    text = raw
+    if raw.startswith("@"):
+        text = Path(raw[1:]).read_text(encoding="utf-8")
+    return json.loads(text)
+
+
+def _cmd_register(args) -> int:
+    """`hermes workflow register --id ID --from-file PATH ...`
+
+    Snapshots the YAML into the catalog. Deliberately does NOT compile it: a
+    recipe may carry `{{ params.* }}` placeholders that only resolve at
+    run-catalog time, so demanding a clean compile here would make every
+    parameterized recipe unregisterable. `run-catalog` compiles (and verifies)
+    before anything executes.
+    """
+    from .store.catalog import CatalogError, register
+
+    try:
+        param_schema = _parse_json_arg(getattr(args, "param_schema", None), "--param-schema")
+    except (json.JSONDecodeError, OSError) as e:
+        sys.stderr.write(f"error: --param-schema is not valid JSON: {e}\n")
+        return EXIT_USAGE
+
+    tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
+    try:
+        entry = register(
+            args.catalog_id,
+            args.from_file,
+            tags=tags,
+            owner=args.owner,
+            description=args.description,
+            param_schema=param_schema,
+        )
+    except CatalogError as e:
+        sys.stderr.write(f"error: {e}\n")
+        return EXIT_USAGE
+
+    if getattr(args, "as_json", False):
+        sys.stdout.write(json.dumps(dict(entry), indent=2, default=str) + "\n")
+    else:
+        sys.stdout.write(
+            f"registered {entry['id']} v{entry['version']} -> workflows/{entry['path']}\n"
+        )
+    return EXIT_OK
+
+
+def _cmd_list_catalog(args) -> int:
+    from .store.catalog import list_entries
+
+    tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
+    rows = list_entries(
+        tags=tags or None,
+        catalog_id=getattr(args, "catalog_id", None),
+        latest_only=not getattr(args, "all_versions", False),
+    )
+    if getattr(args, "as_json", False):
+        sys.stdout.write(json.dumps([dict(r) for r in rows], indent=2, default=str) + "\n")
+        return EXIT_OK
+    if not rows:
+        sys.stdout.write("no catalog entries (register one with `hermes workflow register`)\n")
+        return EXIT_OK
+    sys.stdout.write(f"{'ID':<28} {'VER':>4}  {'TAGS':<24} DESCRIPTION\n")
+    for r in rows:
+        tag_str = ",".join(r.get("tags") or [])
+        sys.stdout.write(
+            f"{str(r.get('id')):<28} {int(r.get('version', 0)):>4}  {tag_str:<24} "
+            f"{r.get('description') or ''}\n"
+        )
+    return EXIT_OK
+
+
+def _cmd_run_catalog(args) -> int:
+    """`hermes workflow run-catalog ID [--version N] [--params JSON]`
+
+    Reads the registered snapshot, substitutes `{{ params.* }}`, then goes
+    through the ordinary compile -> verify -> run path. A recipe gets no
+    special trust: the verifier applies the same rules it applies to a
+    hand-written file.
+    """
+    from . import compile_text, run
+    from .config import load_workflow_config
+    from .ir import WorkflowRejected
+    from .store.catalog import CatalogError, get_entry, load_version_text, render_params, validate_params
+
+    cfg = load_workflow_config()
+    enabled = bool(cfg.get("enabled", False)) or bool(os.environ.get("HERMES_WORKFLOW_FAKE"))
+    if not enabled and not args.dry_run:
+        sys.stderr.write("error: workflow is disabled (workflow.enabled: false). Set enabled: true in config.yaml.\n")
+        return EXIT_RUNTIME
+
+    try:
+        params = _parse_json_arg(getattr(args, "params", None), "--params") or {}
+        extra_input = _parse_json_arg(getattr(args, "input", None), "--input") or {}
+    except (json.JSONDecodeError, OSError) as e:
+        sys.stderr.write(f"error: invalid JSON argument: {e}\n")
+        return EXIT_USAGE
+    if not isinstance(params, dict):
+        sys.stderr.write("error: --params must be a JSON object\n")
+        return EXIT_USAGE
+
+    try:
+        entry = get_entry(args.catalog_id, getattr(args, "version", None))
+        mismatch = validate_params(entry.get("param_schema"), params)
+        if mismatch:
+            sys.stderr.write(f"error: --params does not match the entry's param_schema: {mismatch}\n")
+            return EXIT_USAGE
+        text = render_params(load_version_text(args.catalog_id, entry.version), params)
+    except CatalogError as e:
+        sys.stderr.write(f"error: {e}\n")
+        return EXIT_USAGE
+
+    try:
+        vir = compile_text(text, phase1_warn_overrides=bool(cfg.get("phase1_warn_overrides", False)))
+    except WorkflowRejected as e:
+        sys.stderr.write(f"REJECTED {args.catalog_id} v{entry.version}\n")
+        for i in e.issues:
+            if i.severity == "error":
+                sys.stderr.write(f"  [ERROR] {i.code} {i.node or '?'}: {i.message}\n")
+        return EXIT_VERIFY
+
+    worker = None
+    if not args.dry_run:
+        fake_requested = bool(getattr(args, "fake", False)) or bool(os.environ.get("HERMES_WORKFLOW_FAKE"))
+        if fake_requested:
+            from .runtime.worker import FakeWorker
+
+            worker = FakeWorker()
+            sys.stderr.write("workflow: using FakeWorker (no live LLM)\n")
+        else:
+            from .runtime.live import LiveWorker
+
+            worker = LiveWorker()
+
+    # The params travel into the run as input too, so a recipe can reference
+    # them as `{{ input.market }}` at run time as well as substituting them
+    # into its own text at load time. An explicit --input wins on collision.
+    run_input: Dict[str, Any] = dict(params)
+    run_input.update(extra_input)
+
+    env = run(
+        vir,
+        input=run_input,
+        worker=worker,
+        dry_run=args.dry_run,
+        max_budget_usd=getattr(args, "max_budget_usd", None),
+    )
+    env["catalog"] = {"id": entry["id"], "version": entry.version}
+    sys.stdout.write(json.dumps(env, indent=2, default=str) + "\n")
+    if env.get("status") == "awaiting_gate":
+        return EXIT_GATE
+    return EXIT_OK
 
 
 def _cmd_schedule(args) -> int:
