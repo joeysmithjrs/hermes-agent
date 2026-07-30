@@ -63,8 +63,6 @@ __all__ = [
 # Same shape as a workflow id: a directory name on every supported platform.
 CATALOG_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
 
-_PARAM_RE = re.compile(r"\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
-
 
 class CatalogError(ValueError):
     """Raised for an invalid catalog id, a missing entry, or bad params."""
@@ -266,25 +264,17 @@ def render_params(text: str, params: Optional[Dict[str, Any]]) -> str:
     for the driver to resolve at run time. A placeholder with no matching param
     raises rather than rendering empty — a workflow silently missing its market
     or budget is worse than one that refuses to start.
+
+    The substitution itself lives in ``expr.render_params`` (shared with the
+    prompt library); this wrapper only re-raises as a ``CatalogError`` so a bad
+    ``--params`` reads as a catalog problem to the CLI.
     """
-    params = params or {}
+    from ..expr import TemplateError, render_params as _render_params
 
-    def sub(m: "re.Match[str]") -> str:
-        key = m.group(1)
-        if key not in params:
-            raise CatalogError(
-                f"recipe references {{{{ params.{key} }}}} but --params supplied no '{key}' "
-                f"(given: {sorted(params)})"
-            )
-        val = params[key]
-        if isinstance(val, (dict, list)):
-            # inline as YAML flow style so the result still parses
-            return yaml.safe_dump(val, default_flow_style=True).strip()
-        if isinstance(val, bool):
-            return "true" if val else "false"
-        return str(val)
-
-    return _PARAM_RE.sub(sub, text)
+    try:
+        return _render_params(text, params)
+    except TemplateError as exc:
+        raise CatalogError(str(exc)) from None
 
 
 def validate_params(param_schema: Optional[Dict[str, Any]], params: Optional[Dict[str, Any]]) -> Optional[str]:

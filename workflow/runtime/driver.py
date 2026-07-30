@@ -927,6 +927,45 @@ class Driver:
         ctx["input_for_node"] = rendered_input
         return ctx
 
+    def _resolve_prompt(self, node: Node, ctx: Dict[str, Any]) -> Node:
+        """Return a node whose ``spec.prompt`` is the final prompt string.
+
+        ONE resolution point, shared by top-level agent nodes and fanout/map
+        branches, so the two can never disagree about what a prompt means:
+
+        1. ``{library: <name>, params: {...}}`` (post-Phase-3 §3) loads the
+           named prompt body and substitutes its ``{{ params.* }}`` — a pure
+           file read + string format, no model call. Each param VALUE is
+           itself rendered against ctx first, so
+           ``params: {topic: "{{ seed.output.topic }}"}`` works.
+        2. The resulting string goes through the ordinary ``expr.render``, so
+           ``{{ node.output.field }}`` / ``{{ input.x }}`` / ``{{ workspace.dir }}``
+           resolve against live run data.
+
+        Always renders into a COPY: the IR node stays a reusable template for a
+        retry or a resume, exactly as `_branch_compute` already treated branch
+        leaves.
+        """
+        spec = node.spec
+        if spec is None or spec.prompt is None:
+            return node
+        import copy as _copy
+
+        from ..expr import render
+        from ..prompts.library import is_library_prompt, resolve_prompt_spec
+
+        prompt = spec.prompt
+        if is_library_prompt(prompt):
+            prompt = resolve_prompt_spec(prompt, param_renderer=lambda v: render(v, ctx))
+        if not isinstance(prompt, str):
+            return node  # e.g. {"file": ...} -- not this feature's business
+        rendered = render(prompt, ctx)
+        if rendered == spec.prompt:
+            return node
+        resolved = _copy.deepcopy(node)
+        resolved.spec.prompt = rendered
+        return resolved
+
     def _run_agent(self, nr: NodeRun, node: Node) -> None:
         """Compute-only (TASK 4): safe to call from a worker thread —
         mutates only `nr`'s own fields. RunState aggregate mutation
@@ -935,7 +974,7 @@ class Driver:
         ctx = self._build_ctx(node)
         # Pass rendered input as the worker ctx input
         ctx["input"] = ctx.get("input_for_node", {})
-        result = self.worker.run_node(node, ctx)
+        result = self.worker.run_node(self._resolve_prompt(node, ctx), ctx)
         nr.output = result.get("output")
         nr.cost_usd = float(result.get("cost_usd", 0.0) or 0.0)
         # TASK 5: top-level cost_usd/tokens_in/tokens_out on the worker's
@@ -1319,8 +1358,9 @@ class Driver:
             if bnode.spec and bnode.spec.input:
                 for k, v in bnode.spec.input.items():
                     rendered_input[k] = render(v, ctx)
-            if bnode.spec and isinstance(bnode.spec.prompt, str):
-                bnode.spec.prompt = render(bnode.spec.prompt, ctx)
+            # One prompt-resolution point for branches and top-level nodes
+            # alike (`_resolve_prompt`): library refs + `{{ }}` rendering.
+            bnode = self._resolve_prompt(bnode, ctx)
             ctx["input"] = rendered_input or {"item": item}
 
             if bnode.kind == "agent":

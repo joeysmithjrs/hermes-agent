@@ -266,7 +266,7 @@ def _check_node(
         if not n.spec or n.spec.prompt is None or n.spec.prompt == "":
             err("PROMPT", n.id, "agent node missing prompt")
         else:
-            _check_template_refs(n, ir, err)
+            _check_prompt(n, ir, err)
         # F2: override-only fields no execution path honors yet. Phase 3
         # shrinks this to profile/workspace -- model/provider (Phase 2) and
         # tools/max_turns (Phase 3) are honored via the LiveWorker
@@ -469,14 +469,41 @@ def _check_tools_unknown(n: Node, err, warn) -> None:
         )
 
 
-def _check_template_refs(n: Node, ir: WorkflowIR, err) -> None:
+def _check_prompt(n: Node, ir: WorkflowIR, err) -> None:
+    """Resolve a node's prompt far enough to check it at compile time.
+
+    For the ``spec.prompt: {library: <name>, params: {...}}`` form (Post-Phase-3
+    §2) this LOADS the library and substitutes its params, then checks the
+    resulting text's ``{{ }}`` node references — so an author learns about an
+    unknown library, a param the library requires but the node never supplies,
+    or a typo'd node id inside the library body, all before anything runs.
+    Unknown library = hard reject (code PROMPT_LIBRARY); there is no
+    "not found -> empty prompt" fall-through.
+    """
+    if not n.spec:
+        return
+    prompt = n.spec.prompt
+    from .prompts.library import PromptLibraryError, is_library_prompt, resolve_prompt_spec
+
+    if is_library_prompt(prompt):
+        try:
+            prompt = resolve_prompt_spec(prompt)
+        except PromptLibraryError as exc:
+            err("PROMPT_LIBRARY", n.id, str(exc))
+            return
+    _check_template_refs(n, ir, err, text=prompt)
+
+
+def _check_template_refs(n: Node, ir: WorkflowIR, err, *, text: Any = None) -> None:
     """Check that template variables in an agent prompt resolve to real nodes."""
     import re
 
-    if not n.spec or not isinstance(n.spec.prompt, str):
+    if text is None:
+        text = n.spec.prompt if n.spec else None
+    if not isinstance(text, str):
         return
     node_ids = {nd.id for nd in ir.nodes}
-    for m in re.finditer(r"\{\{\s*([A-Za-z_][A-Za-z0-9_\.]*)\s*\}\}", n.spec.prompt):
+    for m in re.finditer(r"\{\{\s*([A-Za-z_][A-Za-z0-9_\.]*)\s*\}\}", text):
         path = m.group(1)
         head = path.split(".")[0]
         if head in ("input", "branch", "run"):
