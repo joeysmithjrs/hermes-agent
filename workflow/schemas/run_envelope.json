@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RunEnvelope",
+  "type": "object",
+  "required": ["run_id", "workflow_id", "status"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "attempt_id": { "type": "integer", "minimum": 1 },
+    "workflow_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "running", "succeeded", "partial", "failed", "cancelled", "awaiting_gate", "paused"]
+    },
+    "succeeded": { "type": "array", "items": { "type": "string" } },
+    "failed": { "type": "array", "items": { "type": "string" } },
+    "skipped": { "type": "array", "items": { "type": "string" } },
+    "awaiting_gate": { "type": ["string", "null"] },
+    "started_at": { "type": ["string", "null"] },
+    "ended_at": { "type": ["string", "null"] },
+    "cost_usd": { "type": "number", "minimum": 0 },
+    "final_output_ref": { "type": ["string", "null"] },
+    "resume_hint": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

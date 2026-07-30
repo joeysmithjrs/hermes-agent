@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ErrorObject",
+  "type": "object",
+  "required": ["code", "message"],
+  "properties": {
+    "code": {
+      "type": "string",
+      "enum": ["NODE_TIMEOUT", "BUDGET", "SCHEMA", "SCRIPT", "AGENT", "GATE_TIMEOUT", "CANCELLED", "VERIFY", "INTERRUPTED", "CARDINALITY"]
+    },
+    "message": { "type": "string" },
+    "retriable": { "type": "boolean" },
+    "details": {}
+  },
+  "additionalProperties": false
+}

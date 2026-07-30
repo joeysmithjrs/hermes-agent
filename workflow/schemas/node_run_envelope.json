@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NodeRunEnvelope",
+  "type": "object",
+  "required": ["node_run_id", "node_id", "kind", "status", "attempt"],
+  "properties": {
+    "node_run_id": { "type": "string" },
+    "node_id": { "type": "string" },
+    "kind": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "ready", "running", "succeeded", "failed", "skipped", "cancelled", "awaiting_gate"]
+    },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "started_at": { "type": ["string", "null"] },
+    "ended_at": { "type": ["string", "null"] },
+    "cost_usd": { "type": "number", "minimum": 0 },
+    "port": { "type": ["string", "null"] },
+    "output": {},
+    "error": {},
+    "artifact_ref": { "type": ["string", "null"] },
+    "events": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

@@ -12856,7 +12856,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "prompt-size",
         "send", "sessions", "setup",
         "skills", "slack", "status", "tools", "uninstall", "update",
-        "version", "webhook", "whatsapp", "whatsapp-cloud", "chat", "secrets", "security",
+        "version", "webhook", "whatsapp", "whatsapp-cloud", "chat", "secrets", "security", "workflow",
         # Help-ish invocations — plugin commands not being listed in
         # top-level --help is an acceptable trade-off for skipping an
         # expensive eager import of every bundled plugin module.
@@ -15181,6 +15181,20 @@ def main():
     # prompt-size command  (parser built in hermes_cli/subcommands/prompt_size.py)
     # =========================================================================
     build_prompt_size_parser(subparsers, cmd_prompt_size=cmd_prompt_size)
+
+    # =========================================================================
+    # workflow command — multi-agent workflow orchestration (default-off)
+    # Soft-imported: if the `workflow` package is absent or fails to import,
+    # `hermes --help` still works (acceptance #6). Mirrors the LSP/curator
+    # try/except import-guard style used throughout this file.
+    # =========================================================================
+    try:
+        from workflow.cli import register_subparser as _register_workflow_cli
+
+        _register_workflow_cli(subparsers)
+    except Exception as _workflow_err:  # noqa: BLE001
+        # Workflow is optional + default-off — never let registration break the CLI.
+        logger.debug("workflow CLI registration failed: %s", _workflow_err)
 
     # =========================================================================
     # Parse and execute

@@ -12,7 +12,10 @@ nodes:
     spec:
       prompt: |
         Research {{ input.topic }}. Return JSON {"bullets":[...],"sources":[...]}
-      tools: [web_search]
+      # NOTE: tools/model/profile are override-only fields the Phase 1 inherit
+      # path cannot enforce (AUDIT F2); they are rejected under the default strict
+      # posture. The Phase 2 subprocess override path will honor them. Omitted
+      # here so this example validates by default (`hermes workflow validate`).
       budget_usd: 0.4
       output:
         type: object
@@ -23,7 +26,6 @@ nodes:
       prompt: |
         Turn this research into a short markdown brief:
         {{ research.output }}
-      tools: [write_file]
       budget_usd: 0.3
   - id: notify
     kind: script
