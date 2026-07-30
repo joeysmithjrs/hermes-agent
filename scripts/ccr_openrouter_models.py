@@ -241,7 +241,7 @@ def apply() -> None:
 
     # Synchronize gateway.config.json (in-memory gateway reads this at boot)
     if GW.exists():
-        gw = json.loads(GW.read_text())
+        gw = json.loads(GW.read_text(encoding="utf-8"))
     else:
         gw = {"providers": []}
     for p in gw.get("providers") or []:
@@ -259,12 +259,12 @@ def apply() -> None:
         "openai/gpt-5.6-terra* (openai/ prefix is reserved as provider type)."
     )
     GW.parent.mkdir(parents=True, exist_ok=True)
-    GW.write_text(json.dumps(gw, indent=2) + "\n")
+    GW.write_text(json.dumps(gw, indent=2) + "\n", encoding="utf-8")
 
     # Default Claude settings → GLM orchestrator, CCR base URL
     SETTINGS.parent.mkdir(parents=True, exist_ok=True)
     if SETTINGS.exists():
-        settings = json.loads(SETTINGS.read_text())
+        settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
     else:
         settings = {}
     settings["apiKeyHelper"] = str(API_KEY_HELPER)
@@ -281,7 +281,7 @@ def apply() -> None:
             "ANTHROPIC_SMALL_FAST_MODEL": "z-ai/glm-5.2",
         }
     )
-    SETTINGS.write_text(json.dumps(settings, indent=2) + "\n")
+    SETTINGS.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
 
     _write_wrappers()
     print("apply complete — restart CCR (`ccr stop; ccr start --no-open`) to load.")
@@ -335,8 +335,7 @@ def _write_wrappers() -> None:
             shutil.copy2(wpath, BIN / "ccr-claude-code-wrapper-default-claude-code")
         launch = LOCAL_BIN / f"claude-{key if key != 'default' else 'glm'}"
         launch.write_text(
-            f"#!/bin/sh\nexec '{wpath}' --model '{model}' \"$@\"\n"
-        )
+            f"#!/bin/sh\nexec '{wpath}' --model '{model}' \"$@\"\n", encoding="utf-8")
         launch.chmod(0o755)
     print("wrappers:", sorted(p.name for p in LOCAL_BIN.glob("claude-*")))
 
@@ -356,7 +355,7 @@ def show() -> None:
     print("rules", len((cfg.get("Router") or {}).get("rules") or []))
     print("aliases", ALIASES)
     if GW.exists():
-        gw = json.loads(GW.read_text())
+        gw = json.loads(GW.read_text(encoding="utf-8"))
         print(
             "gateway providers",
             [(p.get("name"), p.get("models")) for p in gw.get("providers") or []],
@@ -366,7 +365,7 @@ def show() -> None:
 def _api_key() -> str:
     if not API_KEY_HELPER.exists():
         raise SystemExit(f"missing api key helper {API_KEY_HELPER}")
-    return subprocess.check_output([str(API_KEY_HELPER)], text=True).strip()
+    return subprocess.check_output([str(API_KEY_HELPER)], text=True, encoding="utf-8", errors="replace").strip()
 
 
 def verify(models: list[str] | None = None) -> int:
