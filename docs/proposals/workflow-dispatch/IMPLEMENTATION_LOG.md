@@ -175,3 +175,48 @@ Suite went from 48 → **59 passed** (`python -m pytest tests/workflow -q`).
 - **Structural strictness**: multi-entry / terminal-fanout / single-upstream joins are accepted Phase-1 semantics (see item 8).
 - Conversation tool registration, Python DSL, runtime output-schema validation, richer reducers (`first_k`/`majority`), native cron/webhook trigger fields, secret-tool taxonomy, OS-level script isolation, and budget-gate continuation remain candidly Phase-2/3 debts (unchanged from the original log).
 - `DelegateWorker` reuse is real but the standalone non-Fake CLI cannot execute live agent workflows without a parent-agent/shim (unchanged).
+
+
+---
+
+## Remediation pass 2 (2026-07-30)
+
+### Durability write-path gap — fixed
+
+Pass 1 correctly implemented the F6 **read/resume-decision** policy: a node
+already persisted as `running` with `side_effects: external` transitions to
+`failed` with `INTERRUPTED` during default resume and is not auto-requeued.
+It did not, however, make the preceding **write path** durable. The driver set
+a node (and an inline fanout branch) to `running` in memory, entered the
+blocking worker dispatch, and only checkpointed when that dispatch returned.
+A SIGKILL while an external action was in flight therefore left `run.json`
+without the `running` state; resume saw a pending node and could replay the
+external action. This was a "test passed, bug still present" gap: pass 1's F6
+regression hand-crafted a state dict already marked `running`, so it tested
+the read path but not the write-before-blocking boundary.
+
+1. **Fix 2.1:** `runtime/driver.py:_run_node_run` now calls the established
+   `_checkpoint()` immediately after recording/emitting `running` and before
+   dispatching every node kind. The existing post-completion main-loop
+   checkpoint remains and persists the terminal state. `_checkpoint()` remains
+   the single established path that atomically writes both `checkpoint.json`
+   and authoritative `run.json` using temp file plus `os.replace`.
+2. **Fix 2.2:** `runtime/driver.py:_run_one_branch` applies the same ordering
+   to each inline fanout branch: set `running`, record start time and event,
+   checkpoint, then invoke the agent/script branch dispatch. This complements,
+   rather than replaces, pass 1's persisted branch-template/item recovery.
+3. **Fix 2.3:** `tests/workflow/test_durability_pass2.py` launches a separate
+   Python OS process with a sleeping `FakeWorker` for an
+   `side_effects: external` agent, durably records every effect call to a
+   sidecar JSON file, then sends a real `SIGKILL` during the sleep. The parent
+   verifies persisted `run.json` says `running`, verifies default `resume()`
+   produces `failed`/`INTERRUPTED` without increasing the sidecar count, and
+   verifies `retry_failed=True` explicitly re-runs the node and increments the
+   count.
+
+The new test was sanity-checked by temporarily removing both pre-dispatch
+checkpoints: it failed after SIGKILL because persisted `run.json` had no
+running node. Reapplying the checkpoints makes it pass. Future durability
+coverage must exercise real blocking calls racing real process interrupts; a
+hand-crafted persisted state alone cannot validate the write boundary. The
+existing pass-1 F6 read-path tests remain unchanged and pass.

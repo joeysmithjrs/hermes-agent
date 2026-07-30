@@ -347,6 +347,7 @@ class Driver:
         nr.status = "running"
         nr.started_at = _ts()
         events.start_event(self.run_id, nr.node_run_id, nr.node_id, node.kind)
+        self._checkpoint()
 
         try:
             if node.kind == "agent":
@@ -523,6 +524,7 @@ class Driver:
         nr.status = "running"
         nr.started_at = _ts()
         events.start_event(self.run_id, nr.node_run_id, f"{fanout_node_id}#{nr.branch_index}", bnode.kind)
+        self._checkpoint()
         try:
             if bnode.kind == "agent":
                 result = self.worker.run_node(bnode, ctx)
