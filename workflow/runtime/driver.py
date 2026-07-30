@@ -19,6 +19,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from ..expr import TemplateError, eval_condition
 from ..ir import Node, VerifiedIR, WorkflowIR
 from ..store import fs
 from ..store import checkpoint as ckpt
@@ -277,20 +278,26 @@ class Driver:
         return nr
 
     def _compute_ready(self) -> List[NodeRun]:
-        """Return NodeRuns whose upstreams all succeeded and conditions hold."""
+        """Return NodeRuns whose upstreams all succeeded and conditions hold.
+
+        Conditionally-pruned nodes cascade to `skipped` first, to a fixed
+        point (a whole downstream chain resolves in one call regardless of
+        node declaration order — F3.2), before the ready set is collected.
+        """
+        self._propagate_skips()
         ready: List[NodeRun] = []
         for node_id, n in self.nodes.items():
             # gate nodes: seed a node-run when upstreams done, then run (parks).
             if n.kind == "gate":
                 existing = self.state.node_runs_by_node.get(node_id, [])
                 if not existing:
-                    if self._upstreams_done(node_id):
+                    if self._node_ready(node_id):
                         nr = self._ensure_node_run(node_id)
                         if nr.status == "pending":
                             ready.append(nr)
                     continue
                 nr = self.state.node_runs[existing[0]]
-                if nr.status == "pending" and self._upstreams_done(node_id):
+                if nr.status == "pending" and self._node_ready(node_id):
                     ready.append(nr)
                 continue
             # normal node: ensure a node-run exists, check readiness
@@ -298,33 +305,127 @@ class Driver:
             if not existing:
                 # fanout branches create their own node-runs at materialization;
                 # all node kinds need a node-run seeded once upstreams are done
-                if self._upstreams_done(node_id):
+                if self._node_ready(node_id):
                     nr = self._ensure_node_run(node_id)
                     if nr.status == "pending":
                         ready.append(nr)
                 continue
             for nrid in existing:
                 nr = self.state.node_runs[nrid]
-                if nr.status == "pending" and self._upstreams_done(node_id):
+                if nr.status == "pending" and self._node_ready(node_id):
                     ready.append(nr)
         return ready
 
-    def _upstreams_done(self, node_id: str) -> bool:
-        """All upstream node-runs (per incoming edges or from_) have succeeded."""
+    def _node_ready(self, node_id: str) -> bool:
+        return self._resolve_upstreams(node_id) == "ready"
+
+    def _propagate_skips(self) -> None:
+        """Mark nodes `skipped` whose upstream requirement can never be
+        satisfied (a false edge condition, or an upstream that was itself
+        skipped) — to a fixed point, so a multi-hop skip chain resolves in
+        one pass regardless of node declaration order (F3.2)."""
+        any_changed = False
+        changed = True
+        while changed:
+            changed = False
+            for node_id in self.nodes:
+                if self.state.node_runs_by_node.get(node_id):
+                    continue  # already has a node-run (ran, running, or skipped)
+                if self._resolve_upstreams(node_id) == "skip":
+                    self._mark_skipped(node_id)
+                    changed = True
+                    any_changed = True
+        if any_changed:
+            self._checkpoint()
+
+    def _mark_skipped(self, node_id: str) -> None:
         n = self.nodes[node_id]
-        upstream_ids: List[str] = []
+        nr = self._ensure_node_run(node_id)
+        nr.status = "skipped"
+        nr.started_at = _ts()
+        nr.ended_at = nr.started_at
+        events.start_event(self.run_id, nr.node_run_id, node_id, n.kind)
+        events.end_event(self.run_id, nr.node_run_id, node_id, "skipped")
+        if node_id not in self.state.skipped:
+            self.state.skipped.append(node_id)
+
+    def _resolve_upstreams(self, node_id: str) -> str:
+        """Resolve a node's upstream requirement to 'ready' (may run now),
+        'waiting' (still pending on an in-flight upstream), or 'skip'
+        (an upstream is terminal in a way that can never satisfy it).
+
+        Two upstream mechanisms exist: `from:` (join fan-in list — a plain
+        list of node ids, no per-edge conditions) and plain incoming
+        `edges:` (each may carry `condition:`). The verifier does not forbid
+        a node from declaring both; pre-existing driver behavior (unchanged
+        by this fix) prefers `from:` when present and ignores incoming edges
+        entirely for readiness in that case — so a `condition:` on an edge
+        into a node that also has `from:` is silently inert. That is a
+        pre-existing constraint of the two mechanisms, not new in F3.1/F3.2.
+        """
+        n = self.nodes[node_id]
         if n.from_:
-            upstream_ids = list(n.from_)
-        else:
-            upstream_ids = [e.from_ for e in self.incoming.get(node_id, [])]
+            return self._resolve_from_upstreams(n.from_)
+        incoming = self.incoming.get(node_id, [])
+        if not incoming:
+            return "ready"  # entry node — no upstream requirement
+        return self._resolve_edge_upstreams(incoming)
+
+    def _resolve_from_upstreams(self, upstream_ids: List[str]) -> str:
+        waiting = False
         for up in upstream_ids:
             runs = self.state.node_runs_by_node.get(up, [])
             if not runs:
-                return False
+                waiting = True
+                continue
             for nrid in runs:
-                if self.state.node_runs[nrid].status != "succeeded":
-                    return False
-        return True
+                st = self.state.node_runs[nrid].status
+                if st == "skipped":
+                    return "skip"
+                if st != "succeeded":
+                    waiting = True
+        return "waiting" if waiting else "ready"
+
+    def _resolve_edge_upstreams(self, edges: List) -> str:
+        """AND across a node's incoming edges (matches prior _upstreams_done
+        semantics for the unconditional case): one permanently-blocked edge
+        dooms the whole node to 'skip', even if other edges are still pending."""
+        waiting = False
+        for e in edges:
+            state = self._edge_state(e)
+            if state == "blocked":
+                return "skip"
+            if state == "pending":
+                waiting = True
+        return "waiting" if waiting else "ready"
+
+    def _edge_state(self, edge) -> str:
+        """'satisfied' | 'blocked' | 'pending' for one incoming edge."""
+        runs = self.state.node_runs_by_node.get(edge.from_, [])
+        if not runs:
+            return "pending"
+        primary = self.state.node_runs[runs[0]]
+        if primary.status == "skipped":
+            return "blocked"
+        if primary.status != "succeeded":
+            # includes "failed": the driver does not (yet) propagate hard
+            # failures downstream as skip — out of scope for this pass.
+            return "pending"
+        # a fanout upstream referenced directly by a plain edge (not `from:`):
+        # every spawned branch must also be terminal before the edge counts.
+        for nrid in runs[1:]:
+            if self.state.node_runs[nrid].status != "succeeded":
+                return "pending"
+        if edge.condition is None:
+            return "satisfied"
+        try:
+            ok = eval_condition(edge.condition, primary.output)
+        except TemplateError:
+            # unparseable at runtime (should already be caught at compile
+            # time by verify.py's F3.3 check) — fail closed, same posture
+            # as eval_condition's own docstring.
+            return "blocked"
+        return "satisfied" if ok else "blocked"
 
     # ---- node execution ---------------------------------------------------
 

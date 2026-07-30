@@ -433,3 +433,182 @@ def test_cancel_marks_run_cancelled(wf_home):
     assert res["status"] == "cancelled", res
     st = status(env["run_id"])
     assert st["status"] == "cancelled", st
+
+
+# ---------------------------------------------------------------------------
+# Remediation pass 3 — conditional edges: parsed but never evaluated (bug repro)
+# ---------------------------------------------------------------------------
+
+CONDITIONAL_YAML = """
+workflow: test_conditional
+version: 1
+nodes:
+  - id: check
+    kind: agent
+    spec: {prompt: "Score it"}
+  - id: stop_path
+    kind: script
+    run: workflow.examples.echo
+    input: {branch: "stop"}
+  - id: continue_path
+    kind: script
+    run: workflow.examples.echo
+    input: {branch: "continue"}
+edges:
+  - { from: check, to: stop_path, condition: "$.score < 5" }
+  - { from: check, to: continue_path, condition: "$.score >= 5" }
+triggers:
+  - { kind: manual }
+"""
+
+CHAIN_YAML = """
+workflow: cond_chain
+version: 1
+nodes:
+  - id: a
+    kind: agent
+    spec: {prompt: "Do A"}
+  - id: b
+    kind: agent
+    spec: {prompt: "Do B"}
+  - id: c
+    kind: agent
+    spec: {prompt: "Do C"}
+edges:
+  - { from: a, to: b, condition: "$.go == true" }
+  - { from: b, to: c }
+triggers:
+  - { kind: manual }
+"""
+
+MALFORMED_CONDITION_YAML = """
+workflow: bad_cond
+version: 1
+nodes:
+  - id: a
+    kind: agent
+    spec: {prompt: "Do A"}
+  - id: b
+    kind: agent
+    spec: {prompt: "Do B"}
+edges:
+  - { from: a, to: b, condition: "score should be low" }
+triggers:
+  - { kind: manual }
+"""
+
+
+def test_conditional_edge_only_satisfied_branch_runs(wf_home):
+    """The pass-3 bug repro: `condition:` on an edge was parsed (Edge.condition
+    round-trips fine) but `eval_condition` was never called anywhere in the
+    driver, so BOTH mutually-exclusive branches ran. Only the edge whose
+    condition is true against the upstream output should execute; the other
+    must land in `skipped` — not `succeeded`, not `failed`."""
+    from workflow import compile_text, run
+    from workflow.runtime.worker import FakeWorker
+
+    vir = compile_text(CONDITIONAL_YAML, phase1_warn_overrides=True)
+    env = run(vir, input={}, worker=FakeWorker(outputs={"check": {"score": 3}}))
+    assert env["status"] == "succeeded", env
+    assert "stop_path" in env["succeeded"], env
+    assert "continue_path" not in env["succeeded"], env
+    assert "continue_path" not in env["failed"], env
+    assert "continue_path" in env["skipped"], env
+
+
+def test_conditional_edge_opposite_score_flips_branch(wf_home):
+    """Same graph, opposite literal — confirms the driver evaluates the
+    condition (not just always taking the first/last edge)."""
+    from workflow import compile_text, run
+    from workflow.runtime.worker import FakeWorker
+
+    vir = compile_text(CONDITIONAL_YAML, phase1_warn_overrides=True)
+    env = run(vir, input={}, worker=FakeWorker(outputs={"check": {"score": 9}}))
+    assert env["status"] == "succeeded", env
+    assert "continue_path" in env["succeeded"], env
+    assert "stop_path" in env["skipped"], env
+
+
+def test_skip_propagates_transitively_through_chain(wf_home):
+    """F3.2: A -cond false-> B -unconditional-> C. B is skipped because its
+    inbound condition is false; C must also be skipped (it is downstream of
+    only a skipped node), and the run must finalize rather than deadlock in
+    `running`/`partial` forever."""
+    from workflow import compile_text, run
+    from workflow.runtime.worker import FakeWorker
+
+    vir = compile_text(CHAIN_YAML, phase1_warn_overrides=True)
+    env = run(vir, input={}, worker=FakeWorker(outputs={"a": {"go": False}}))
+    assert env["status"] == "succeeded", env
+    assert env["succeeded"] == ["a"], env["succeeded"]
+    assert set(env["skipped"]) == {"b", "c"}, env["skipped"]
+    assert env["failed"] == [], env["failed"]
+
+
+def test_unconditional_edges_unaffected_by_condition_wiring(wf_home):
+    """Regression guard: a plain edge (condition: None) behaves exactly as
+    before this fix — upstream succeeded is sufficient, no skip involved."""
+    from workflow import compile_text, run
+    from workflow.runtime.worker import FakeWorker
+
+    vir = compile_text(LINEAR_YAML, phase1_warn_overrides=True)
+    env = run(vir, input={}, worker=FakeWorker())
+    assert env["status"] == "succeeded", env
+    assert env["succeeded"] == ["a", "b", "c"], env["succeeded"]
+    assert env["skipped"] == [], env["skipped"]
+
+
+def test_malformed_condition_rejected_at_compile_time(wf_home):
+    """F3.3: `hermes workflow validate` (compile_text/verify_ir) must reject a
+    malformed `condition:` string before any run starts, not blow up mid-run."""
+    from workflow import compile_text
+    from workflow.ir import WorkflowRejected
+
+    with pytest.raises(WorkflowRejected) as exc:
+        compile_text(MALFORMED_CONDITION_YAML, phase1_warn_overrides=True)
+    codes = [i.code for i in exc.value.issues if i.severity == "error"]
+    assert "CONDITION" in codes, codes
+
+
+DOTTED_CONDITION_YAML = """
+workflow: cond_dotted
+version: 1
+nodes:
+  - id: check
+    kind: script
+    run: workflow.examples.echo
+    input: {score: 3}
+  - id: stop_path
+    kind: script
+    run: workflow.examples.echo
+    input: {branch: "stop"}
+  - id: continue_path
+    kind: script
+    run: workflow.examples.echo
+    input: {branch: "continue"}
+edges:
+  - { from: check, to: stop_path, condition: "$.echo.score < 5" }
+  - { from: check, to: continue_path, condition: "$.echo.score >= 5" }
+triggers:
+  - { kind: manual }
+"""
+
+
+def test_condition_field_resolves_dotted_path_against_wrapped_script_output(wf_home):
+    """Regression for a bug found while independently re-verifying pass 3 live:
+    eval_condition's regex allows a dotted field path (`[A-Za-z_][A-Za-z0-9_.]*`)
+    but the original lookup treated the whole dotted string as one flat dict
+    key, so `$.echo.score` against `workflow.examples.echo`'s wrapped output
+    (`{"echo": {"score": 3}}`) raised TemplateError and was caught by
+    `_edge_state` as `blocked` — silently skipping BOTH branches instead of
+    correctly selecting one. `eval_condition` must walk each `.`-separated
+    component instead of indexing the raw dotted string."""
+    from workflow import compile_text, run
+    from workflow.runtime.worker import FakeWorker
+
+    vir = compile_text(DOTTED_CONDITION_YAML, phase1_warn_overrides=True)
+    env = run(vir, input={}, worker=FakeWorker())
+    assert env["status"] == "succeeded", env
+    assert "stop_path" in env["succeeded"], env
+    assert "continue_path" in env["skipped"], env
+    assert "continue_path" not in env["succeeded"], env

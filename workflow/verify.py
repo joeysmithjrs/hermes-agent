@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set
 
+from .expr import TemplateError, validate_condition_syntax
 from .ir import (
     Issue,
     Node,
@@ -69,6 +70,12 @@ def verify_ir(ir: WorkflowIR, *, phase1_warn_overrides: bool = False) -> Verifie
             up = nodes[e.from_]
             if up.ports and e.port not in up.ports:
                 err("REF", e.from_, f"edge references unknown port '{e.port}'")
+        # condition syntax must parse at compile time, not blow up mid-run (F3.3)
+        if e.condition:
+            try:
+                validate_condition_syntax(e.condition)
+            except TemplateError as exc:
+                err("CONDITION", e.to, f"malformed edge condition: {exc}")
 
     # ---- structure: acyclic (F-acyclic v1) ----------------------------------
     _check_acyclic(nodes, ir.edges, err)
