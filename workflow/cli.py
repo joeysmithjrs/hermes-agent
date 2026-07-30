@@ -598,6 +598,28 @@ def _cmd_schedule(args) -> int:
     workflow_path = str(Path(args.path).resolve())
     name = args.name or f"workflow-{vir.ir.id}"
 
+    # Review HIGH #3: `name` is interpolated into a FILESYSTEM PATH below
+    # (`$HERMES_HOME/scripts/<name>.sh`), and `Path.__truediv__` happily
+    # accepts `..` components and absolute paths. `--name ../../foo` therefore
+    # wrote the generated wrapper script outside $HERMES_HOME entirely. The
+    # downstream `hermes cron create` rejected the traversal so no job was
+    # registered, but the file had already been written by then — a partial
+    # failure that still drops an executable script at an attacker-chosen
+    # path. Validate before the value is ever used as a path component.
+    if (
+        not name
+        or name in (".", "..")
+        or any(sep in name for sep in ("/", "\\"))
+        or Path(name).is_absolute()
+        or name.startswith(".")
+    ):
+        sys.stderr.write(
+            f"error: --name {name!r} is not a valid job name. It becomes a script "
+            "filename under $HERMES_HOME/scripts/, so it must not contain path "
+            "separators, start with '.', or be an absolute path.\n"
+        )
+        return EXIT_USAGE
+
     # The exact `hermes workflow run` invocation the scheduled job will make.
     run_argv = [sys.executable, "-m", "hermes_cli.main", "workflow", "run", workflow_path]
     if args.input:
@@ -647,6 +669,16 @@ def _cmd_schedule(args) -> int:
         scripts_dir = get_hermes_home() / "scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
         script_path = scripts_dir / script_name
+        # Review HIGH #3, belt and braces: the `--name` validation above is the
+        # real gate, but it lives ~70 lines from this write. Re-assert
+        # containment against the RESOLVED path immediately before writing, so
+        # this stays safe if the name ever reaches here by another route.
+        if scripts_dir.resolve() not in script_path.resolve().parents:
+            sys.stderr.write(
+                f"error: refusing to write the generated job script outside "
+                f"{scripts_dir} (resolved to {script_path.resolve()}).\n"
+            )
+            return EXIT_USAGE
         script_path.write_text(script_body, encoding="utf-8")
         try:
             script_path.chmod(0o755)

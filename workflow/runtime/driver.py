@@ -87,6 +87,30 @@ def _default_driver_worker() -> Worker:
     )
 
 
+def _failed_key(nr: "NodeRun") -> str:
+    """The id a node-run is recorded under in ``RunState.failed``.
+
+    Review HIGH #5: fanout/map BRANCH node-runs share their parent's
+    ``node_id``. The parent's own node-run is marked ``succeeded`` (it
+    materialized its branches correctly) the moment it fans out, so a later
+    branch failure appending the bare ``node_id`` put the SAME id in both
+    ``succeeded`` and ``failed`` — two lists a caller is entitled to read as
+    mutually exclusive per-node outcomes. Anything gating on
+    ``"fan" not in env["failed"]`` got a wrong answer.
+
+    Branches are therefore recorded branch-qualified (``fan#2``), which is
+    both disjoint from the parent's entry and strictly more informative —
+    you learn WHICH branch failed, not merely that one did.
+
+    Note this list is a SUMMARY. Readiness/cascade decisions never consult
+    it; they walk node-run statuses via ``node_runs_by_node`` (see
+    ``_edge_state``), so changing the key here cannot alter control flow.
+    """
+    if nr.branch_index is not None:
+        return f"{nr.parent_fanout or nr.node_id}#{nr.branch_index}"
+    return nr.node_id
+
+
 def _new_node_run_id(run_id: str, node_id: str) -> str:
     """Per-execution uuid4 (F1). Readable prefix + unique suffix."""
     return f"{run_id}__{node_id}__{uuid.uuid4().hex[:8]}"
@@ -469,10 +493,26 @@ class Driver:
     # ---- ready-set computation -------------------------------------------
 
     def _seed_initial_node_runs(self) -> None:
-        """Create a NodeRun for every IR node that has no incoming edges."""
+        """Create a NodeRun for every IR node that has no upstream requirement.
+
+        Review (test pass) BUG #2: "no upstream" means no incoming EDGE *and*
+        no `from:` list. The verifier accepts a `join` declared with `from:`
+        and no matching `edges:` entry (its check is `if not n.from_ and not
+        from_edges`), and this seeding used to look at `self.edges` alone — so
+        such a join was misclassified as an entry node and pre-seeded
+        `pending` at time zero. `_propagate_skips` then refused to touch it
+        ("already has a node-run"), so when its upstreams failed or skipped it
+        sat `pending` forever while the run itself went terminal: a node stuck
+        in a non-terminal state, which is the one outcome the failed-upstream
+        cascade exists to prevent.
+
+        Nodes with `from:` are simply not seeded here; the normal ready-set
+        walk creates their node-run once `_resolve_upstreams` says `ready`,
+        and `_propagate_skips` can cascade them to `skipped` otherwise.
+        """
         has_incoming = {e.to for e in self.edges}
         for n in self.ir.nodes:
-            if n.id not in has_incoming:
+            if n.id not in has_incoming and not n.from_:
                 self._ensure_node_run(n.id)
 
     def _ensure_node_run(self, node_id: str, *, branch_index: Optional[int] = None, branch_node: Optional[Node] = None) -> NodeRun:
@@ -621,8 +661,10 @@ class Driver:
                     # with this policy never produces output, but must NOT
                     # block a `from:` join either. Treat it as resolved
                     # (neither blocking nor pending) and move on to the
-                    # next upstream; `_run_join`'s envelope collection will
-                    # naturally include it with a null output.
+                    # next upstream. Note `_run_join` does NOT then reduce it:
+                    # envelope collection keeps only `succeeded` upstreams
+                    # (review HIGH #4), so `continue` unblocks the join
+                    # without injecting a null "result" into the reduction.
                     up_node = self.nodes.get(up)
                     if up_node is not None and up_node.fail_policy == "continue":
                         continue
@@ -825,9 +867,25 @@ class Driver:
         """Build the template ctx from succeeded upstream outputs + run input."""
         ctx: Dict[str, Any] = {"input": self.input}
         # node outputs (envelope-shaped: {output: ...})
+        #
+        # Review (test pass) BUG #1: BRANCH node-runs are excluded. Every
+        # fanout/map branch is created via `_ensure_node_run(node_id,
+        # branch_index=...)`, so it shares its PARENT's node_id — and this
+        # loop used to overwrite ctx[node_id] once per node-run, letting the
+        # last branch processed win. A downstream node writing
+        # `{{ mymap.output }}` therefore saw the last branch's raw output
+        # instead of the map's reduced value, which is precisely the thing
+        # map sugar exists to provide. (For a `fanout` it clobbered the
+        # `{branches, count}` summary just as wrongly.)
+        #
+        # A branch's own data reaches its own template through `ctx["branch"]`
+        # (set in `_run_one_branch`), never through the parent id, so nothing
+        # legitimately depended on the shadowing.
         for nid, nrids in self.state.node_runs_by_node.items():
             for nrid in nrids:
                 nr = self.state.node_runs[nrid]
+                if nr.branch_index is not None:
+                    continue
                 if nr.status == "succeeded" and nr.output is not None:
                     ctx[nid] = {"output": nr.output, "node_run_id": nrid}
         # render node input mapping if present
@@ -993,11 +1051,28 @@ class Driver:
         both paths agree on exactly which node-runs count as "the
         branches" -- never the fanout/map node's OWN envelope, which holds
         the branch node_run_id list (or, for map, the already-reduced
-        value), not branch data."""
+        value), not branch data.
+
+        Review HIGH #4: ONLY `succeeded` branches are reduced. A failed
+        branch carries `output: None`, and a short-circuited or
+        budget-exhausted branch carries a `{"skipped_reason": ...}` marker
+        -- neither is a result. Feeding them to a reducer produced silently
+        wrong answers, not just noisy ones: `first_k` returned a failed
+        branch's `null` as one of its "first k" picks while real results
+        sat further down the list, and `majority` counted `None` (or a
+        skip marker) as a vote that could win an election.
+
+        The count of excluded branches is not lost -- the branch node-runs
+        remain in the checkpoint with their own statuses and reasons, and
+        `majority`'s `total` reflects the votes actually cast, so a caller
+        can still tell a 2-of-2 consensus from a 2-of-10 one.
+        """
         entries: List[Tuple[int, Dict[str, Any]]] = []
         for nrid in self.state.node_runs_by_node.get(fanout_node_id, []):
             upnr = self.state.node_runs[nrid]
             if upnr.branch_index is None:
+                continue
+            if upnr.status != "succeeded":
                 continue
             entries.append((upnr.branch_index, {"node_run_id": nrid, "output": upnr.output}))
         entries.sort(key=lambda t: t[0])
@@ -1078,14 +1153,52 @@ class Driver:
             events.start_event(self.run_id, skip_nr.node_run_id, disp_id, kind)
             events.end_event(self.run_id, skip_nr.node_run_id, disp_id, "skipped")
 
+        def budget_stop() -> bool:
+            """Review BLOCKER #1: the budget circuit-breaker has to be armed
+            INSIDE branch execution, not just around it.
+
+            The top-level loop checked the budget before and after each
+            node-run, but a fanout/map node is ONE node-run that internally
+            runs N branches -- so every branch spent real money before the
+            cap was ever re-examined. With a wide `over:` list that is an
+            unbounded overshoot of a cap the operator set precisely to bound
+            spend. Checked before each branch (sequential) and between waves
+            (concurrent); a branch already dispatched still finishes, same
+            cooperative bound as short_circuit.
+            """
+            self._check_budget()
+            return self.state.status == "paused"
+
+        def skip_over_budget(skip_nr: NodeRun) -> None:
+            """A branch never started because the run hit its budget cap.
+            Recorded as its own reason, distinct from short_circuit: one
+            means 'we had enough answers', the other means 'we ran out of
+            money', and an operator reading the checkpoint needs to tell
+            them apart."""
+            skip_nr.status = "skipped"
+            skip_nr.started_at = _ts()
+            skip_nr.ended_at = skip_nr.started_at
+            skip_nr.output = {"skipped_reason": "budget_exhausted"}
+            disp_id = f"{fanout_node_id}#{skip_nr.branch_index}"
+            kind = skip_nr.branch_node.kind if skip_nr.branch_node else "agent"
+            events.start_event(self.run_id, skip_nr.node_run_id, disp_id, kind)
+            events.end_event(self.run_id, skip_nr.node_run_id, disp_id, "skipped")
+
         if self.max_parallel_nodes <= 1:
+            stopped = False
             for one_nr in branch_nrs:
                 if one_nr.status != "pending":
+                    continue
+                if stopped or budget_stop():
+                    stopped = True
+                    skip_over_budget(one_nr)
                     continue
                 if short_circuit and succeeded_count() >= sc_k:
                     skip_short_circuited(one_nr)
                     continue
                 self._run_one_branch(one_nr)
+            if stopped:
+                self._checkpoint()
             return
 
         # TASK 4 concurrent path: dispatch in bounded waves (rather than
@@ -1095,6 +1208,14 @@ class Driver:
         # up-front would defeat the whole point of short_circuit.
         pending = [b for b in branch_nrs if b.status == "pending"]
         while pending:
+            # Review BLOCKER #1: budget is re-checked between waves, so the
+            # overshoot is bounded by one wave (<= max_parallel_nodes
+            # branches) rather than by the whole `over:` list.
+            if budget_stop():
+                for one_nr in pending:
+                    skip_over_budget(one_nr)
+                self._checkpoint()
+                break
             if short_circuit and succeeded_count() >= sc_k:
                 for one_nr in pending:
                     skip_short_circuited(one_nr)
@@ -1209,8 +1330,8 @@ class Driver:
             self.state.cost_usd += nr.cost_usd
             self.state.tokens_in += nr.tokens_in
             self.state.tokens_out += nr.tokens_out
-            if nr.status == "failed" and nr.node_id not in self.state.failed:
-                self.state.failed.append(nr.node_id)
+            if nr.status == "failed" and _failed_key(nr) not in self.state.failed:
+                self.state.failed.append(_failed_key(nr))
         if nr.cost_usd:
             events.cost_event(self.run_id, nr.node_run_id, nr.cost_usd)
         events.end_event(
@@ -1256,6 +1377,15 @@ class Driver:
             else:
                 for nrid in self.state.node_runs_by_node.get(up, []):
                     upnr = self.state.node_runs[nrid]
+                    # Review HIGH #4: same rule as `_branch_envelopes` --
+                    # only `succeeded` upstreams are reduced. This matters
+                    # for an `on_fail: continue` upstream, which reaches a
+                    # join `failed` with a null output: `continue` promises
+                    # the failure does not BLOCK downstream, not that a
+                    # non-result gets counted as a result by `majority` or
+                    # occupies a slot in `first_k`.
+                    if upnr.status != "succeeded":
+                        continue
                     envelopes.append({"node_run_id": nrid, "output": upnr.output})
         reducer = self._select_reducer(node)
         nr.output = reducer(envelopes)
@@ -1357,55 +1487,93 @@ class Driver:
                 nr.error = {"code": "VERIFY", "message": f"unknown node {nr.node_id}", "retriable": False}
                 kinds[id(nr)] = "unknown"
 
-        dispatchable = [nr for nr in ready if kinds[id(nr)] != "unknown"]
-
-        # ---- phase 0: mark EVERY dispatchable node-run running, THEN one
-        #      checkpoint, BEFORE any future is submitted. --------------------
-        for nr in dispatchable:
-            if nr.branch_index is not None:
-                self._mark_branch_running(nr)
-            else:
-                self._mark_top_level_running(nr, self.nodes[nr.node_id])
-        self._checkpoint()
-
-        pool_items = [nr for nr in dispatchable if kinds[id(nr)] == "pool"]
-        sequential_items = [nr for nr in dispatchable if kinds[id(nr)] == "sequential"]
-
-        # ---- phase 1: pool items, submitted together, fully awaited -------
-        if pool_items:
-            with ThreadPoolExecutor(max_workers=max(1, self.max_parallel_nodes)) as ex:
-                futures = {}
-                for nr in pool_items:
-                    if nr.branch_index is not None:
-                        futures[nr.node_run_id] = ex.submit(self._branch_compute, nr)
-                    else:
-                        futures[nr.node_run_id] = ex.submit(self._top_level_compute, nr, self.nodes[nr.node_id])
-                for nr in pool_items:
-                    futures[nr.node_run_id].result()
-
-        # ---- phase 2: sequential (structural) items, main thread only -----
-        for nr in sequential_items:
-            self._top_level_compute(nr, self.nodes[nr.node_id])
-
-        # ---- fold, strictly in original ready-set order --------------------
         budget_tripped = False
+        for nr in ready:
+            if kinds[id(nr)] == "unknown":
+                if nr.node_id not in self.state.failed:
+                    self.state.failed.append(nr.node_id)
+
+        # ---- group the ready set into ordered dispatch waves ---------------
+        # Review BLOCKER #1: the previous shape marked and submitted the
+        # ENTIRE ready set before the fold loop's first `_check_budget()`, so
+        # overshoot scaled with the width of the ready set rather than with
+        # max_parallel_nodes -- a cap the operator set to bound spend could be
+        # blown by an arbitrary multiple in one batch.
+        #
+        # Cost only lands in RunState at FOLD time (`_finish_*`), so a budget
+        # check is only meaningful after the preceding work has been folded.
+        # Hence: walk `ready` in order, greedily grouping consecutive pool
+        # items into waves of <= max_parallel_nodes, with each structural
+        # (sequential) item its own singleton wave. Each wave is
+        # marked+checkpointed, run, folded, then budget-checked before the
+        # next wave is dispatched.
+        #
+        # Because waves are consecutive slices of the ready-ordered list and
+        # each is folded in order, the GLOBAL fold order is still exactly
+        # ready-set order -- the determinism property the pool path exists to
+        # preserve. And no pool future is ever in flight while a structural
+        # node-run executes (each wave is fully awaited first), so a fanout
+        # materializing branches still cannot race a pool worker's
+        # `_build_ctx` read of `node_runs_by_node`.
+        waves: List[List[NodeRun]] = []
         for nr in ready:
             kind = kinds[id(nr)]
             if kind == "unknown":
-                if nr.node_id not in self.state.failed:
-                    self.state.failed.append(nr.node_id)
                 continue
-            if nr.branch_index is not None:
-                self._finish_branch(nr)
+            if kind == "sequential":
+                waves.append([nr])
+                continue
+            if waves and waves[-1] and kinds[id(waves[-1][0])] == "pool" and len(waves[-1]) < max(1, self.max_parallel_nodes):
+                waves[-1].append(nr)
             else:
-                self._finish_top_level(nr, self.nodes[nr.node_id])
+                waves.append([nr])
+
+        for wave in waves:
+            if self.state.status == "paused" or self._aborted:
+                # Budget tripped (or an on_fail: fail_run abort landed) in an
+                # earlier wave: leave the rest `pending`. They were never
+                # marked running, so the outer loop simply re-evaluates them
+                # on a resume rather than resurrecting phantom work.
+                break
+
+            # ---- mark the WHOLE wave running, THEN one checkpoint, BEFORE
+            #      any future is submitted (checkpoint-before-dispatch).
+            for nr in wave:
+                if nr.branch_index is not None:
+                    self._mark_branch_running(nr)
+                else:
+                    self._mark_top_level_running(nr, self.nodes[nr.node_id])
             self._checkpoint()
-            self._check_budget()
-            if self.state.status == "paused" and not budget_tripped:
-                # Persist the pause immediately -- same rationale as the
-                # sequential path (see execute()'s docstring comment there).
+
+            if kinds[id(wave[0])] == "pool":
+                with ThreadPoolExecutor(max_workers=max(1, self.max_parallel_nodes)) as ex:
+                    futures = {}
+                    for nr in wave:
+                        if nr.branch_index is not None:
+                            futures[nr.node_run_id] = ex.submit(self._branch_compute, nr)
+                        else:
+                            futures[nr.node_run_id] = ex.submit(
+                                self._top_level_compute, nr, self.nodes[nr.node_id]
+                            )
+                    for nr in wave:
+                        futures[nr.node_run_id].result()
+            else:
+                # structural (fanout/map/join/gate): main thread only
+                for nr in wave:
+                    self._top_level_compute(nr, self.nodes[nr.node_id])
+
+            for nr in wave:
+                if nr.branch_index is not None:
+                    self._finish_branch(nr)
+                else:
+                    self._finish_top_level(nr, self.nodes[nr.node_id])
                 self._checkpoint()
-                budget_tripped = True
+                self._check_budget()
+                if self.state.status == "paused" and not budget_tripped:
+                    # Persist the pause immediately -- same rationale as the
+                    # sequential path (see execute()'s docstring comment there).
+                    self._checkpoint()
+                    budget_tripped = True
         return budget_tripped
 
     # ---- Phase 3 §A: on_fail policy dispatch -------------------------------
@@ -1488,8 +1656,8 @@ class Driver:
         nr.started_at = None
         nr.ended_at = None
         nr.output = None
-        if nr.node_id in self.state.failed:
-            self.state.failed.remove(nr.node_id)
+        if _failed_key(nr) in self.state.failed:
+            self.state.failed.remove(_failed_key(nr))
         events.run_event(
             self.run_id,
             {
@@ -1934,8 +2102,8 @@ def resume(
             if node and node.side_effects == "external":
                 nr.status = "failed"
                 nr.error = {"code": "INTERRUPTED", "message": "side-effecting node was running at crash; not auto-requeued", "retriable": True}
-                if nr.node_id not in state.failed:
-                    state.failed.append(nr.node_id)
+                if _failed_key(nr) not in state.failed:
+                    state.failed.append(_failed_key(nr))
             else:
                 # safe memo-only requeue running->ready (design §4.4)
                 nr.status = "pending"
@@ -1948,8 +2116,8 @@ def resume(
             if nr.status == "failed":
                 nr.status = "pending"
                 nr.error = None
-                if nr.node_id in state.failed:
-                    state.failed.remove(nr.node_id)
+                if _failed_key(nr) in state.failed:
+                    state.failed.remove(_failed_key(nr))
                 reset_node_ids.append(nr.node_id)
         if reset_node_ids:
             d._cascade_reset_skipped_downstream(reset_node_ids)

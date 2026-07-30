@@ -280,13 +280,22 @@ def _resolve_child_toolsets(tool_names: List[str], node_id: str) -> Optional[Lis
         import model_tools as _model_tools
         import toolsets as _toolsets
     except Exception as exc:  # pragma: no cover - defensive import guard
+        # Review BLOCKER #2: FAIL CLOSED. This used to return None, which
+        # `build_child_agent` reads as "inherit ALL of the parent's toolsets"
+        # -- so a node that asked to be NARROWED got the widest possible
+        # grant instead, precisely when something was already wrong. Return
+        # the raw requested names: `_build_child_agent` intersects them with
+        # the parent's expanded toolsets, so unrecognized names intersect to
+        # the empty set and the child gets nothing rather than everything.
         logger.warning(
             "could not import toolsets/model_tools to resolve spec.tools for node "
-            "%r (%s); falling back to toolsets=None (inherit all)",
+            "%r (%s); failing CLOSED -- passing the requested names through so the "
+            "child is narrowed (possibly to nothing) rather than granted every "
+            "parent toolset",
             node_id,
             exc,
         )
-        return None
+        return sorted(tool_names)
 
     resolved: set = set()
     for name in tool_names:
@@ -304,13 +313,30 @@ def _resolve_child_toolsets(tool_names: List[str], node_id: str) -> Optional[Lis
         if owning_toolset:
             resolved.add(owning_toolset)
         else:
+            # Review BLOCKER #2: an unresolvable name is NOT dropped. Dropping
+            # every name left `resolved` empty, which returned None ->
+            # inherit-all. Keep the name instead: it will not intersect the
+            # parent's toolsets, so it contributes nothing, which is the
+            # fail-closed direction.
+            #
+            # This is a real case, not a defensive hypothetical: the
+            # verifier's F3 live-tool tags (trade_live, trade_paper, exec,
+            # send_email, notify_telegram -- verify.py's _LIVE_TOOL_TAGS) are
+            # design-doc placeholders that compile fine but resolve to no
+            # runtime toolset. A gated, side-effecting node scoped with
+            # `tools: [send_email]` is exactly the node that must NOT be
+            # silently handed the parent's entire toolset.
+            resolved.add(name)
             logger.warning(
-                "node %r spec.tools entry %r did not resolve to a known tool or "
-                "toolset name; dropping it (the verifier should have already "
-                "rejected this at compile time)",
+                "node %r spec.tools entry %r did not resolve to a known runtime "
+                "tool or toolset name; keeping it so it fails CLOSED (it will not "
+                "intersect the parent's toolsets, granting nothing) rather than "
+                "widening the child to every parent toolset",
                 node_id,
                 name,
             )
+    # `resolved` is non-empty whenever `tool_names` was non-empty (unresolvable
+    # names are kept above), so this never degrades to the inherit-all None.
     return sorted(resolved) if resolved else None
 
 

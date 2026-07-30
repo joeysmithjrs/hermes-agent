@@ -88,6 +88,20 @@ still-tripped cap:
 hermes workflow run --resume wf_1a2b3c4d5e6f --max-budget-usd 25.00
 ```
 
+**The cap is a circuit breaker, not a hard ceiling — know the overshoot.**
+Cost is only known after a node-run finishes, so the breaker can only trip
+*after* the work that blew it has been paid for. The bound is one dispatch
+wave: at most `max_parallel_nodes` node-runs (or fanout/map branches) can be
+in flight when the cap is crossed, and everything not yet started is skipped
+with `skipped_reason: budget_exhausted`. So budget with `max_parallel_nodes`
+in mind — a wide pool means a proportionally wider overshoot.
+
+This is checked **inside** fanout/map branch execution, not only around it. An
+earlier Phase 3 build checked the budget only in the top-level loop, which
+meant a single `map` node over a 200-item list ran all 200 branches before the
+cap was ever re-examined — an unbounded overshoot of the exact number the
+operator set to bound spend.
+
 ---
 
 ## 3. Trigger chaining — `chain` / `run --from-run`

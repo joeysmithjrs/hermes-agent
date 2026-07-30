@@ -330,6 +330,32 @@ def _check_node(
 
                 branch_node = _BranchNode.from_dict(bd)
                 _check_node(branch_node, nodes, ir, phase1_warn_overrides, err, warn)
+                # Review MEDIUM #6: the F6 retry rejection above only sees ONE
+                # node's own (on_fail, side_effects) pair. But at run time the
+                # driver resolves a branch's policy as "branch template's
+                # on_fail, else the PARENT fanout/map's" (`_fail_policy_for`),
+                # so a parent with `on_fail: retry` over a branch declaring
+                # `side_effects: external` is the same F6 hazard assembled
+                # from two nodes -- and it compiled clean, contradicting the
+                # documented "rejected at compile time" guarantee. (The
+                # driver's own runtime guard still refused the retry, so F6
+                # was never actually violated; the promise was.) Check the
+                # resolved combination, exactly as the driver will.
+                effective_branch_policy = branch_node.on_fail or n.on_fail
+                if (
+                    effective_branch_policy == "retry"
+                    and branch_node.side_effects == "external"
+                    and branch_node.on_fail != "retry"  # already reported by the recursion above
+                ):
+                    err(
+                        "ON_FAIL",
+                        n.id,
+                        f"{n.kind} node sets on_fail: retry and its branch template declares "
+                        "side_effects: external -- branches inherit the parent's policy when "
+                        "they set none of their own, so this is the F6 hazard (auto-retrying a "
+                        "side-effecting action risks duplicate effects). Set an explicit "
+                        "on_fail on the branch template, or use fail_run/skip_downstream.",
+                    )
             except Exception as exc:  # malformed branch template
                 err("STRUCTURE", n.id, f"invalid branch template: {exc}")
         # Phase 3 §A: a `map` node compiles to fanout + implicit reduce (its
@@ -467,16 +493,27 @@ def _check_live_tool_gating(nodes: Dict[str, Node], ir: WorkflowIR, err) -> None
 
     def path_without_gate(start: str, target: str) -> bool:
         """True if there's a path start->target that crosses no gate (excl target)."""
+        # Review MEDIUM #7: if the entry node IS a gate, every path from it is
+        # gated by construction. The walk below tested `p == start` BEFORE
+        # `p in gates`, so a leading gate was reported as an ungated path and
+        # `approve -> act` — the safest possible shape, and the one an author
+        # reaches for first — was rejected LIVE_UNGATED. The only way to pass
+        # was to prepend a throwaway no-op node, i.e. the verifier taught a
+        # worse habit than the one it was policing.
+        if start in gates:
+            return False
         # BFS over reverse adjacency from target back to start, blocking at gates
         stack = [target]
         seen = {target}
         while stack:
             u = stack.pop()
             for p in radj.get(u, []):
-                if p == start:
-                    return True
+                # Order matters: a gate blocks the path even when it happens
+                # to be `start` itself.
                 if p in gates:
                     continue  # this path crosses a gate — blocked
+                if p == start:
+                    return True
                 if p not in seen:
                     seen.add(p)
                     stack.append(p)

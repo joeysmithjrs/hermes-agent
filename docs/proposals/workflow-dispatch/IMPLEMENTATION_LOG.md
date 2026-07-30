@@ -608,3 +608,97 @@ live credentials, and the Phase 2 log records a review agent accidentally
 spending real money there. Every agent was given a hard requirement to run under
 `HERMES_HOME=$(mktemp -d) HERMES_WORKFLOW_FAKE=1` and to verify `LiveWorker`
 only through injected stub builders. No live run occurred in this phase.
+
+## Adversarial review pass (Phase 3) — findings fixed in this branch
+
+A review subagent attacked the diff with hermetic repros. Seven demonstrated
+defects, all fixed here; a separate test pass independently found two more.
+
+**BLOCKER 1 — the budget circuit-breaker was not armed inside branch
+execution.** `_check_budget()` ran in the top-level loop only. A fanout/map is
+ONE node-run that internally runs N branches, so every branch spent before the
+cap was re-examined: 5 branches at $5 against a $6 cap produced `cost 25.0`
+with all 5 workers invoked. Separately, the pooled top-level path submitted the
+*entire* ready set before its first check, so overshoot scaled with graph width
+rather than with `max_parallel_nodes`. Fixed by dispatching in ordered waves —
+branches between waves, and the top-level batch regrouped into
+`max_parallel_nodes`-sized waves — with a budget check between each. Overshoot
+is now bounded by one wave and documented as such in `PHASE3_SURFACES.md`;
+un-started branches record `skipped_reason: budget_exhausted`, distinct from
+`short_circuit` (ran out of money vs. had enough answers).
+
+**BLOCKER 2 — `spec.tools` failed OPEN.** `_resolve_child_toolsets` returned
+`None` when nothing resolved, and `None` means *inherit every parent toolset*
+to `build_child_agent`. So a node asking to be narrowed got the widest possible
+grant, precisely when something was already wrong. This was not hypothetical:
+the verifier's own F3 live-tool tags (`trade_live`, `exec`, `send_email`, …)
+compile fine but resolve to no runtime toolset, so a gated side-effecting node
+scoped `tools: [send_email]` — the highest-risk node in the system — silently
+received everything. Now fails closed: unresolvable names are kept, intersect
+to the empty set in `delegate_tool`, and grant nothing.
+
+**HIGH 3 — `schedule --register --name` path traversal.** `--name` was joined
+straight into `$HERMES_HOME/scripts/<name>.sh`; `--name ../../x` wrote an
+executable wrapper script outside `$HERMES_HOME`. `hermes cron create` rejected
+the traversal afterwards, so no job registered — but the file was already on
+disk. Now validated before use, plus a resolved-path containment assert at the
+write site.
+
+**HIGH 4 — reducers counted non-results as results.** `_branch_envelopes`
+collected every branch regardless of status, so a failed branch's `output:
+None` was reduced as data: `first_k` returned that `null` as one of its "first
+k" picks while real successes sat further down, and `majority` counted `None`
+as a vote that could win. Now only `succeeded` branches are reduced, in both
+the map and join paths. `majority.total` still reflects votes actually cast, so
+a 2-of-2 consensus stays distinguishable from 2-of-10.
+
+**HIGH 5 — a fanout node id appeared in BOTH `succeeded` and `failed`.**
+Branches share their parent's `node_id`, and the parent is marked succeeded
+when it materializes. Two lists a caller is entitled to read as disjoint were
+not. Branch failures are now recorded branch-qualified (`fan#2`) — disjoint and
+strictly more informative. The lists are a summary; readiness never consults
+them (it walks node-run statuses), so control flow is unaffected.
+
+**MEDIUM 6 — the F6 compile-time claim was overstated.** The verifier checked
+`on_fail` and `side_effects` on a single node, so a map parent with
+`on_fail: retry` over a branch template with `side_effects: external` compiled
+clean, contradicting the documented "rejected at compile time". The driver's
+runtime guard still refused the retry, so F6 itself was never violated — but
+the doc was wrong. Verifier extended to the parent/branch combination.
+
+**MEDIUM 7 — F3 rejected the safest possible graph.** `path_without_gate`
+tested `p == start` before `p in gates`, so a gate that IS the entry node
+(`approve -> act`) was reported as an ungated path. The only workaround was
+prepending a throwaway node — the verifier was teaching a worse habit than the
+one it policed. Check order fixed.
+
+Two further bugs, found by the test pass and fixed here:
+
+**Map sugar's headline feature was broken.** `_build_ctx` overwrote
+`ctx[node_id]` for every node-run sharing that id, and branches share their
+parent's id — so the last branch won and a downstream `{{ mymap.output }}` saw
+one branch's raw output instead of the reduced value. The entire point of map
+sugar. Branch node-runs are now excluded from the parent's ctx slot (a branch
+reaches its own template via `ctx["branch"]`, never the parent id).
+
+**A `from:`-only join could hang `pending` forever.** `_seed_initial_node_runs`
+derived "has incoming" from `edges` alone, so a join declared with `from:` and
+no matching `edges:` (a form the verifier explicitly accepts) was misclassified
+as an entry and pre-seeded; `_propagate_skips` then skipped over it as "already
+handled" and it never reached a terminal status. Exactly the hang the
+failed-upstream cascade exists to prevent.
+
+**Confirmed intact by the review** (no finding): checkpoint-before-dispatch
+under a real mid-batch `os._exit` kill (all 4 dispatched node-runs durably
+`running`, resume completed them); fold-order determinism across repeated
+parallel runs; no cost double-count; F5 CARDINALITY under parallelism with zero
+worker invocations; `child ⊆ parent` genuinely enforced in `delegate_tool`;
+kanban stub honesty; `--dry-run` never building a worker.
+
+## Tests
+`pytest tests/workflow tests/tools/test_workflow_tools.py -q` → **229 passed**
+(155 pre-Phase-3 + 74 new across `test_phase3_graph.py`,
+`test_phase3_runtime.py`, `test_phase3_surfaces.py`). Hermetic: no network, no
+live LLM, no real config, no real message send, no kanban write. `ruff check`
+clean on `workflow/`, `tools/workflow_tools.py`, and `tests/workflow/`;
+`PLW1514` (the Windows encoding footgun) clean on all touched files.
