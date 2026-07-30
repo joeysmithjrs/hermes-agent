@@ -1,0 +1,118 @@
+# Post-Phase-3 example — `debate` node: bounded rounds, judge escalation.
+#
+# A debate is ONE node that internally runs `participants x max_rounds` agent
+# turns. Both numbers are here in the YAML, so the worst case is arithmetic,
+# not a surprise on the bill. The graph stays acyclic: rounds live inside the
+# node, they are not edges.
+#
+# Protocols:
+#   vote            stop as soon as a round produces a clean majority
+#                   (directive.threshold, else a strict majority of the votes
+#                   actually cast). Still diverged at max_rounds -> the node
+#                   FAILS (DEBATE_DIVERGED) rather than reporting a verdict
+#                   nobody reached.
+#   judge_escalate  same rounds; on divergence `directive.judge` reads the whole
+#                   transcript and rules. `directive.judge` is REQUIRED for this
+#                   protocol -- the driver will not invent a judge prompt.
+#   continue        no convergence requirement; every round runs, arguments are
+#                   concatenated. Use for exploration, not decision gates.
+#
+# Each turn gets `{{ branch.* }}`: role, round, topic, objective, and the
+# transcript of PREVIOUS rounds (empty in round 1 -- every participant in a
+# round sees the same transcript, so a round is order-independent).
+#
+# Audit: each turn is its own node_run_id,
+#   wf_<id>__debate_desk_debate__round_2__agent_bear__1f0c9d3a
+# so `workflow logs` reconstructs who argued what, when.
+#
+# Validate:  hermes workflow validate examples-post-phase3-debate.yaml
+# Dry run:   hermes workflow run examples-post-phase3-debate.yaml --dry-run
+# Fake run:  HERMES_WORKFLOW_FAKE=1 hermes workflow run examples-post-phase3-debate.yaml
+workflow: post_phase3_debate_demo
+version: 1
+nodes:
+  - id: seed
+    kind: script
+    run: workflow.examples.echo
+    input:
+      topic: "Should the desk cut its energy exposure this week?"
+
+  - id: desk_debate
+    kind: debate
+    protocol: judge_escalate
+    max_rounds: 3
+    directive:
+      topic: "{{ seed.output.echo.topic }}"
+      objective: "Reach a single desk recommendation with a stated risk."
+      # Vote over this field of each argument, not the whole message body.
+      vote_key: verdict
+      # Optional: how many agreeing votes end it early. Default is a strict
+      # majority of the votes cast that round.
+      threshold: 2
+      # The judge only runs if the last round is still split. Its model may
+      # differ from the participants' -- judge_model/judge_provider are honored
+      # (judge_profile is REJECTED: no execution path applies a profile).
+      judge_model: "anthropic/claude-opus-5"
+      judge:
+        id: chair
+        kind: agent
+        spec:
+          prompt: |
+            You are the desk chair. The council did not converge.
+            Topic: {{ branch.topic }}
+            Full transcript: {{ branch.transcript }}
+            Pick ONE of the candidate verdicts and say why in three sentences.
+            End with: {"verdict": "<the verdict you picked>"}
+    participants:
+      - id: bull
+        kind: agent
+        spec:
+          # Reusable prompt body from the library (post-Phase-3 §2). Params are
+          # rendered against run data first, then the body renders against ctx.
+          prompt:
+            library: debate-participant-v1
+            params:
+              topic: "{{ seed.output.echo.topic }}"
+              objective: "Reach a single desk recommendation with a stated risk."
+              stance: "argue for holding the exposure"
+          model: "anthropic/claude-haiku-4-5-20251001"
+          max_turns: 4
+      - id: bear
+        kind: agent
+        spec:
+          prompt:
+            library: debate-participant-v1
+            params:
+              topic: "{{ seed.output.echo.topic }}"
+              objective: "Reach a single desk recommendation with a stated risk."
+              stance: "argue for cutting the exposure"
+          model: "anthropic/claude-haiku-4-5-20251001"
+          max_turns: 4
+      - id: risk
+        kind: agent
+        spec:
+          prompt: |
+            You are the risk officer in round {{ branch.round }} of at most
+            {{ branch.max_rounds }}.
+            Topic: {{ branch.topic }}
+            Previous rounds: {{ branch.transcript }}
+            Judge both sides on downside only, then end with:
+            {"verdict": "<hold|cut>"}
+          model: "anthropic/claude-haiku-4-5-20251001"
+
+  - id: desk_note
+    kind: agent
+    spec:
+      prompt: |
+        The council ran {{ desk_debate.output.rounds_run }} round(s) and stopped
+        because: {{ desk_debate.output.stopped_reason }}.
+        Verdict: {{ desk_debate.output.result.judgment }}
+        Majority was: {{ desk_debate.output.result.majority_winner }}
+        Write the two-sentence desk note.
+
+edges:
+  - { from: seed, to: desk_debate }
+  - { from: desk_debate, to: desk_note }
+
+triggers:
+  - { kind: manual }

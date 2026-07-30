@@ -1,0 +1,89 @@
+# Post-Phase-3 example — `supervisor` node: a cheap model that can buy a second
+# opinion, with a hard cap on how often.
+#
+# The node's own `spec:` IS the supervisor agent (prompt, tools, max_turns...).
+# `advisor:` is a separate agent template consulted per `advisory_policy`.
+# The NODE's output is always the supervisor's FINAL turn -- never the
+# advisor's. Advice arrives in the supervisor's next turn as
+# `{{ branch.advice }}`.
+#
+# Policies:
+#   ask_on_uncertain  consult only while the supervisor's own output contains
+#                     `request_advisory: true`. One documented signal -- the
+#                     driver does not guess at confidence scores.
+#   always_ask        consult every round, up to the caps.
+#   budget            spend the advisor budget deliberately, then answer.
+#   never_ask         supervisor only; no advisor is constructed at all.
+#
+# Caps: `budget` (REQUIRED for every asking policy) is the hard ceiling on
+# advisor calls for this node; `max_advisory_rounds` may bind tighter. Hitting
+# either STOPS the loop and is recorded in `stopped_reason` -- calls are never
+# silently skipped. A failed advisor does not fail the supervision: the
+# supervisor keeps the answer it already had, and the failed turn stays failed
+# on the checkpoint.
+#
+# Audit: wf_<id>__supervisor_desk_lead__turn_2__agent_supervisor__<uuid>
+#        wf_<id>__supervisor_desk_lead__adv_1__agent_advisor__<uuid>
+#
+# Validate:  hermes workflow validate examples-post-phase3-supervisor.yaml
+# Fake run:  HERMES_WORKFLOW_FAKE=1 hermes workflow run examples-post-phase3-supervisor.yaml
+workflow: post_phase3_supervisor_demo
+version: 1
+nodes:
+  - id: intake
+    kind: script
+    run: workflow.examples.echo
+    input:
+      ticket: "Customer disputes a fill price on an illiquid name."
+
+  - id: desk_lead
+    kind: supervisor
+    advisory_policy: ask_on_uncertain
+    budget: 2                  # HARD cap on advisor calls for this node
+    max_advisory_rounds: 2     # may bind tighter than budget; never looser
+    supervisor_model: "anthropic/claude-haiku-4-5-20251001"
+    advisor_model: "anthropic/claude-opus-5"
+    # Visible and audited -- it lands in every turn's context AND in the node's
+    # output, never in a hidden system-prompt mutation.
+    advisory_context: "Desk policy v3: never settle a dispute above mid without sign-off."
+    spec:
+      prompt: |
+        You are the desk lead. Ticket: {{ intake.output.echo.ticket }}
+        Advice received so far: {{ branch.advice }}
+
+        Decide the resolution yourself if you can. If this genuinely needs a
+        specialist, reply with JSON containing "request_advisory": true and a
+        one-line "question"; otherwise omit that field.
+        Always end with: {"decision": "<your resolution>"}
+      max_turns: 4
+    advisor:
+      id: market_structure
+      kind: agent
+      spec:
+        prompt: |
+          You are a market-structure specialist. The desk lead asks:
+          {{ branch.question }}
+          Desk policy in force: {{ branch.advisory_context }}
+          Answer in at most five sentences. Do not decide -- advise.
+        max_turns: 4
+
+  - id: reply
+    kind: agent
+    spec:
+      # `result` is the supervisor's final turn, verbatim. Reference the whole
+      # object rather than `result.decision` unless the supervisor's
+      # `spec.output` schema makes that field mandatory -- a template reference
+      # to a missing key fails the node at run time, by design.
+      prompt: |
+        Desk lead's final answer: {{ desk_lead.output.result }}
+        (advisor calls used: {{ desk_lead.output.advisor_calls }} of
+        {{ desk_lead.output.budget }}; stopped because
+        {{ desk_lead.output.stopped_reason }})
+        Draft the customer reply.
+
+edges:
+  - { from: intake, to: desk_lead }
+  - { from: desk_lead, to: reply }
+
+triggers:
+  - { kind: manual }

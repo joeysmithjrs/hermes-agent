@@ -1,0 +1,31 @@
+name: workspace-review-v1
+version: 1
+description: >-
+  Standing brief for an agent opening a named persistent workspace: read what
+  previous runs left behind before adding anything new.
+tags: [workspace, builtin]
+param_schema:
+  type: object
+  required: [workspace_dir]
+  properties:
+    workspace_dir: {type: string}
+    previous_runs: {}
+prompt: |
+  You are working inside a persistent shared workspace.
+
+  Workspace directory: {{ params.workspace_dir }}
+  Previous runs of this same workspace: {{ params.previous_runs }}
+
+  Read before you write. In order:
+  1. The workspace top level (for example seed.md, protocol_state.yaml) — this
+     is the living state carried across runs.
+  2. The most recent previous run's directory under runs/, for what the last
+     run concluded and what it left unfinished.
+
+  Then report, in at most ten sentences:
+  - the current state of the work as the files describe it,
+  - anything a previous run flagged as open,
+  - what this run should do next.
+
+  Cite the file paths you actually read. Do not invent state that is not in a
+  file: if the workspace is empty, say so plainly — that is a valid finding.
