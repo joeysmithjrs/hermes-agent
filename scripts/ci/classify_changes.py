@@ -16,6 +16,7 @@ Lanes:
 * ``deps``        — pyproject.toml dependency bounds check.
 * ``npm_lock``    — semantic package-lock.json diff PR comment.
 * ``mcp_catalog`` — bundled MCP catalog / installer review.
+* ``pm_desk``     — the self-contained PM Desk project's own Node CI.
 
 Docker is not a lane — it builds on push-to-main and release only,
 never per-PR.
@@ -40,8 +41,13 @@ _FRONTEND = ("ui-tui/", "web/", "apps/")  # TS typecheck-matrix packages
 _ROOT_NPM = {"package.json", "package-lock.json"}  # shifts every package's tree
 _DOCKER_META = ("docker/", ".hadolint.yml", "Dockerfile") # docker setup
 _SITE = ("website/", "skills/", "optional-skills/")  # docs site + skill pages
+# Self-contained projects under optional-projects/. They are NOT npm workspaces
+# (so they never appear in the frontend matrix), nothing in the Hermes tree
+# imports them, and each owns its dependencies, toolchain and CI lane.
+_PM_DESK = ("optional-projects/pm-desk/",)
+_OPTIONAL_PROJECTS = ("optional-projects/",)
 # Prose/frontend trees that can't touch Python. skills/ is excluded on purpose.
-_PY_SKIP = ("docs/", "website/") + _FRONTEND
+_PY_SKIP = ("docs/", "website/") + _FRONTEND + _OPTIONAL_PROJECTS
 
 # CI-sensitive files: eslint config, workflow files, composite actions.
 # Changes here can influence what code the autofix job executes and pushes to
@@ -108,6 +114,7 @@ def classify(files: list[str]) -> dict[str, bool]:
         "npm_lock": any(f.split("/")[-1] == "package-lock.json" for f in files),
         "mcp_catalog": any(_is_mcp_catalog(f) for f in files),
         "ci_review": any(_is_ci_review(f) for f in files),
+        "pm_desk": any(f.startswith(_PM_DESK) for f in files),
     }
     if not files or any(f.startswith(".github/") for f in files):
         ret["python"] = True
@@ -118,6 +125,7 @@ def classify(files: list[str]) -> dict[str, bool]:
         ret["deps"] = True
         ret["npm_lock"] = True
         ret["ci_review"] = True
+        ret["pm_desk"] = True
 
         # explicitly skip mcp catalog here. it's not needed unless those files are modified.
     return ret

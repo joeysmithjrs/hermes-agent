@@ -31,10 +31,11 @@ DEFAULT = {
     "npm_lock": True,
     "mcp_catalog": False,
     "ci_review": True,
+    "pm_desk": True,
 }
 
 
-def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, npm_lock=False, mcp_catalog=False, docker_meta=False, ci_review=False) -> dict[str, bool]:
+def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, npm_lock=False, mcp_catalog=False, docker_meta=False, ci_review=False, pm_desk=False) -> dict[str, bool]:
     return {
         "python": python,
         "frontend": frontend,
@@ -45,6 +46,7 @@ def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, npm
         "npm_lock": npm_lock,
         "mcp_catalog": mcp_catalog,
         "ci_review": ci_review,
+        "pm_desk": pm_desk,
     }
 
 
@@ -119,6 +121,31 @@ CASES = {
     "desktop src → no ci_review": (
         ["apps/desktop/src/app.tsx"],
         _lanes(frontend=True),
+    ),
+    # optional-projects/ is self-contained: it owns its deps, toolchain and CI,
+    # and nothing in the Hermes tree imports it. A change there runs its own
+    # lane and must NOT drag in the Python suite or the workspace TS matrix.
+    "pm-desk source → pm_desk only": (
+        ["optional-projects/pm-desk/src/ledger/ledger.ts"],
+        _lanes(pm_desk=True),
+    ),
+    "pm-desk lockfile → pm_desk + npm_lock, not frontend": (
+        ["optional-projects/pm-desk/package-lock.json"],
+        _lanes(pm_desk=True, npm_lock=True),
+    ),
+    # Its eslint config is still a CI-sensitive file wherever it lives.
+    "pm-desk eslint config → pm_desk + ci_review": (
+        ["optional-projects/pm-desk/eslint.config.js"],
+        _lanes(pm_desk=True, ci_review=True),
+    ),
+    # A prose-only edge project README is still just prose.
+    "optional-projects README → nothing heavy": (
+        ["optional-projects/README.md"],
+        _lanes(),
+    ),
+    "pm-desk + python → both lanes": (
+        ["optional-projects/pm-desk/src/x.ts", "run_agent.py"],
+        _lanes(python=True, scan=True, pm_desk=True),
     ),
     # Fail open: CI-config / empty / blank diffs run everything.
     ".github change → all": ([".github/workflows/tests.yml"], DEFAULT),

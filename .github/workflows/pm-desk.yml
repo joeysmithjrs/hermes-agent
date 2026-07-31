@@ -1,0 +1,114 @@
+# .github/workflows/pm-desk.yml
+#
+# CI for optional-projects/pm-desk — a self-contained project that is NOT an
+# npm workspace and is not built, installed or imported by Hermes.
+#
+# Scoped on purpose:
+#   - runs only when the ``pm_desk`` lane fires (see scripts/ci/classify_changes.py);
+#   - installs from the project's own lockfile, in the project directory. The
+#     root ``npm ci`` installs nothing on its behalf and no Hermes user pays
+#     for these dependencies;
+#   - pins Node 24, which is what the project declares and what
+#     ``@polymarket/client`` requires in every published version. The root JS
+#     matrix stays on Node 22 and is unaffected.
+#
+# Every step here is offline: the test suite reaches no network, the demo runs
+# from checked-in fixtures, and the opt-in live/Browserbase suites are excluded
+# by vitest config AND self-skip without their env vars.
+
+name: PM Desk
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pm-desk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: optional-projects/pm-desk / check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: optional-projects/pm-desk
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          # The project declares engines.node ">=24" and .npmrc sets
+          # engine-strict, so an older runner Node fails the install outright.
+          node-version: 24
+          cache: npm
+          cache-dependency-path: optional-projects/pm-desk/package-lock.json
+
+      # NOT --ignore-scripts: better-sqlite3 needs its install script to fetch
+      # or build the native binding, and without it every store test fails on
+      # a missing module.
+      - uses: ./.github/actions/retry
+        with:
+          command: npm ci
+          working-directory: optional-projects/pm-desk
+
+      - name: Preflight (Node version)
+        run: npm run preflight
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (offline suite, incl. the paper-only guard)
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # The advisory set must stay empty. Production deps are audited on their
+      # own so a dev-tool advisory can never be mistaken for a shipped one.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=low
+
+      - name: Audit all dependencies
+        run: npm audit --audit-level=high
+
+      # The end-to-end CLI loop, from fixtures. Also the regression test for the
+      # demo's process cleanup: a leaked listener would fail the next step.
+      - name: Offline end-to-end demo
+        run: ./scripts/demo-offline.sh "${RUNNER_TEMP}/pm-desk-demo"
+
+      - name: Assert the demo left no listener behind
+        run: |
+          sleep 2
+          if ss -ltn | grep -q ':8788'; then
+            echo "::error::the demo left a listener on port 8788"
+            ss -ltnp | grep ':8788' || true
+            exit 1
+          fi
+          if pgrep -f 'pm-desk\.ts' >/dev/null; then
+            echo "::error::the demo left a pm-desk process running"
+            pgrep -af 'pm-desk\.ts' || true
+            exit 1
+          fi
+          echo "no leaked listener or child process"
+
+      - name: Assert no runtime state became trackable
+        run: |
+          # data/, dist/, logs/, node_modules/ and .env are the project's own
+          # runtime state, covered by its .gitignore. If a change ever makes one
+          # of them trackable, this catches it before a DB or a secret can land
+          # in a commit. A modified tracked file (e.g. npm rewriting the
+          # lockfile) is equally a failure, so nothing is filtered out.
+          dirty=$(git status --porcelain --untracked-files=all .)
+          if [ -n "$dirty" ]; then
+            echo "::error::PM Desk left files behind after install + test + build + demo:"
+            echo "$dirty"
+            exit 1
+          fi
+          echo "working tree clean"
