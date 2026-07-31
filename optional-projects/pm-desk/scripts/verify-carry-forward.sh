@@ -23,6 +23,23 @@ set -euo pipefail
 SOURCE_REPO="${1:-/home/hermes/pm-desk}"
 SOURCE_REF="${2:-feat/pm-desk-mvp}"
 
+# Files intentionally changed by the Hermes integration, each with the reason.
+# A difference listed here is reported and allowed; ANY other difference fails.
+# Adding a line here is a deliberate act — that is the point.
+intentional_reason() {
+  case "$1" in
+    package.json)      echo "engines.node >=24, eslint 10, preflight + check scripts" ;;
+    package-lock.json) echo "follows package.json" ;;
+    eslint.config.js)  echo "eslint 10 type-checks scripts/*.mjs" ;;
+    README.md)         echo "Node 24, advisories, prompt install, workspaces, cron, CI" ;;
+    src/cli/pm-desk.ts) echo "registers the \`hermes\` subcommand" ;;
+    src/ingress/dispatcher.ts) echo "absolute default workflow path + dryRun option" ;;
+    workflows/pm-signal-adjudication-v0.yaml) echo "drops unusable \`workspace:\` on a tools-empty node" ;;
+    workflows/pm-desk-paper-v0.yaml) echo "documents what \`workspace:\` actually is" ;;
+    *) return 1 ;;
+  esac
+}
+
 FORK_REPO="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 PACKAGE_PREFIX="optional-projects/pm-desk"
 
@@ -64,28 +81,35 @@ fi
 
 # Content. Compare git blob hashes of the committed trees on both sides.
 echo
-differs=0
+identical=0
+expected=0
+unexpected=0
 while read -r path; do
   # --verify -q: without it, rev-parse echoes the failed argument to stdout and
   # the comparison silently reads a path string as if it were a blob hash.
   a=$(git -C "$SOURCE_REPO" rev-parse --verify -q "$SOURCE_REF:$path" || echo absent-in-source)
   b=$(git -C "$FORK_REPO" rev-parse --verify -q "HEAD:$PACKAGE_PREFIX/$path" || echo absent-in-fork)
-  if [[ "$a" != "$b" ]]; then
-    echo "  DIFFERS: $path"
+  if [[ "$a" == "$b" ]]; then
+    identical=$((identical + 1))
+  elif reason=$(intentional_reason "$path"); then
+    echo "  CHANGED (intentional): $path — $reason"
+    expected=$((expected + 1))
+  else
+    echo "  UNEXPECTED DIFFERENCE: $path"
     echo "      standalone $a"
     echo "      fork       $b"
-    differs=$((differs + 1))
+    unexpected=$((unexpected + 1))
   fi
 done < /tmp/cf-source-paths.txt
 
-if [[ "$differs" -gt 0 ]]; then
-  echo "FAIL: $differs file(s) differ from the standalone tree"
+echo
+echo "OK: $identical file(s) byte-identical, $expected intentionally changed"
+if [[ "$unexpected" -gt 0 ]]; then
+  echo "FAIL: $unexpected file(s) differ with no recorded reason"
   echo
-  echo "If a difference is intentional (an integration fix applied on top),"
-  echo "record it in INTEGRATION_SUMMARY.md rather than silencing this check."
+  echo "Either the change was accidental, or it is deliberate and belongs in"
+  echo "intentional_reason() above (and in INTEGRATION_SUMMARY.md)."
   status=1
-else
-  echo "OK: every carried-forward file is byte-identical (git blob hash match)"
 fi
 
 # The specific standalone commit the transplant is known to have post-dated.
