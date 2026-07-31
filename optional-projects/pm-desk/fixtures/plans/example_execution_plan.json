@@ -95,10 +95,15 @@
         "id": "bea_gdp_release",
         "version": 1,
         "url": "https://www.bea.gov/data/gdp/gross-domestic-product",
-        "authority": "primary",
-        "content": { "selector": "main", "strip_selectors": ["nav", "footer"] },
+        "allowed_domains": ["www.bea.gov"],
+        "timeout_ms": 20000,
+        "extract": {
+          "text_selector": "main",
+          "fields": { "headline": "h1" }
+        },
         "fingerprint": "normalized_text_sha256",
-        "robots": { "respect": true }
+        "description": "BEA GDP release landing page — the document the market's rules name.",
+        "linked_market_ids": ["0xexample_market_id"]
       },
       "schedule": "30m",
       "on_fire": ["notify_telegram", "queue_ingress"],
