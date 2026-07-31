@@ -89,6 +89,14 @@ prompt: |
   If you cannot draft a monitor, say so in `unknowns` and set the verdict to
   reject or watch. An unobservable thesis is not a thesis this desk can hold.
 
+  CODE AND STATISTICAL CANDIDATES
+  If the survivor came from code_stat_exploit, the honest deliverable is a
+  buildout, not a story: the interface the program would expose, how it would be
+  validated against stored observations, and what would make it not worth
+  building. Say so plainly and let the plan carry it as a proposed buildout.
+  Padding a daemon-shaped idea with a narrative edge it does not have is the
+  failure mode here.
+
   A missing rules path, a missing primary source, or a resolution criterion you
   could not locate is a reject. Unknowns are unknowns; do not infer an edge
   from an absence of evidence.

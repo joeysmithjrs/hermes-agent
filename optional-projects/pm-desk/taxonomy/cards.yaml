@@ -15,8 +15,20 @@
 # fair-value, resolution mapping, post-print dislocation, intra-venue
 # coherence, and scheduled (slow) primary sources. Cards may set `weight`
 # (default 1) so the seed compiler up-weights judgment seams.
+#
+# v3 (2026-07-31): two changes.
+#
+#   `mission_eligible` marks the families that mean the same thing in every
+#   arena, so a mission_x_arena morning can run one of them across several
+#   sectors of the venue at once (see taxonomy/arenas.yaml).
+#
+#   `code_stat_exploit` admits that some seams are code, not prose. Their hot
+#   path is a daemon or a repo watching a stream; Hermes wakes on a trigger or
+#   reviews a build proposal, and does not re-derive the edge every morning
+#   with an LLM. Those cards deliver a proposed_buildouts[] block, which the
+#   provisioner never installs - Joe approves each one separately.
 
-version: 2
+version: 3
 
 families:
   # ---------------------------------------------------------------------------
@@ -177,6 +189,90 @@ families:
           publishes the disclosure a market resolves on. Record whether the
           filing index or the document itself changes first.
         deliverable: A SourceSpec plus a first-mover note between index and document.
+
+  # ---------------------------------------------------------------------------
+  - id: code_stat_exploit
+    title: Code and statistical exploits (daemon-shaped)
+    status: active
+    paper_only: true
+    description: >
+      Seams that a program can hold and an LLM cannot: jump detection, streaming
+      arithmetic bounds, timed state machines, calibration against history. The
+      deliverable is a build proposal with an interface and a validation plan,
+      not a narrative - because the honest version of this edge runs
+      continuously in code, wakes Hermes on a trigger, and costs nothing when
+      nothing happens. A card here that produces only prose has failed.
+    cards:
+      - id: jump_mean_reversion_daemon
+        title: Jump detection and mean-reversion daemon
+        requires: [polymarket_public_data, local_evidence_store, paper_ledger]
+        prohibits: [live_execution]
+        weight: 2
+        directive: >
+          Design a daemon that watches a defined universe of mid-cap tokens for
+          discrete mid jumps and decides, in code, whether each jump is news or
+          noise. Define the universe, the jump threshold and how it scales with
+          the book, the false-positive policy, and the paper-only signal it
+          emits. State precisely when the daemon should wake Hermes for
+          fair-value or news judgement versus when it should record a paper
+          observation and stay quiet. Quantify the expected wake rate; a daemon
+          that pages every hour is a worse artifact than one that pages twice a
+          week.
+        deliverable: >
+          A proposed_buildouts[] block (problem, interface, validation plan,
+          spawn_recommendation, approval_required true) plus the wake policy.
+
+      - id: streaming_coherence_bounds
+        title: Streaming coherence bound checker
+        requires: [polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        weight: 2
+        directive: >
+          Turn related-market arithmetic into a checker that runs continuously
+          rather than a table an agent rebuilds each morning. Specify how sets
+          of related contracts are discovered, which bounds hold (mutual
+          exclusivity, nesting, sums), what tolerance separates a real breach
+          from spread noise, and what evidence the checker stores so a breach
+          can be argued about later. Say which breaches deserve a human look and
+          which are structural and should be suppressed.
+        deliverable: >
+          A proposed_buildouts[] block with the bound definitions, tolerance
+          policy and validation plan against stored observations.
+
+      - id: post_print_state_machine
+        title: Post-print window state machine
+        requires: [polymarket_public_data, local_evidence_store, paper_ledger]
+        prohibits: [live_execution]
+        weight: 1
+        directive: >
+          Encode a known T0 (a scheduled release, a ruling, an official post) as
+          a coded 5-to-30-minute state machine instead of an agent watching a
+          clock. Define the states, the transitions and their triggers, what is
+          snapshotted in each, and the exit conditions including the boring one
+          where nothing dislocates. Be explicit that this is paper observation:
+          the machine records, it does not act.
+        deliverable: >
+          A state-machine spec plus a proposed_buildouts[] block, and the
+          monitor specs that arm it around the next scheduled T0.
+
+      - id: nowcast_bucket_calibration
+        title: Nowcast-to-bucket calibration
+        requires: [polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        weight: 2
+        directive: >
+          For a bracketed statistical market, build the missing quantitative
+          step: from a public nowcast or consensus to a probability per bucket,
+          using the historical error distribution of that specific nowcast
+          against that specific series. Name the vintages, measure the error
+          (RMSE is a floor, not the answer - check bias and fat tails), and
+          state the sample size honestly. If the history is too short to
+          calibrate, that is the finding, and the market is not tradeable on
+          this method.
+        deliverable: >
+          A calibration note with the error distribution, the resulting bucket
+          probabilities, and a proposed_buildouts[] block for the code that
+          would maintain it.
 
   # ---------------------------------------------------------------------------
   - id: resolution_oracle

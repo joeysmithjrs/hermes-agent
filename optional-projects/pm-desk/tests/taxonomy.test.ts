@@ -64,8 +64,32 @@ describe('taxonomy file', () => {
     );
   });
 
-  it('is on taxonomy version 2+', () => {
-    expect(loadTaxonomy(TAXONOMY_PATH).version).toBeGreaterThanOrEqual(2);
+  it('is on taxonomy version 3+', () => {
+    expect(loadTaxonomy(TAXONOMY_PATH).version).toBeGreaterThanOrEqual(3);
+  });
+
+  it('carries the code_stat_exploit family as active, daemon-shaped work', () => {
+    const family = loadTaxonomy(TAXONOMY_PATH).families.find((f) => f.id === 'code_stat_exploit');
+    expect(family?.status).toBe('active');
+    expect(family?.paper_only).toBe(true);
+    expect(family?.cards.map((c) => c.id)).toEqual([
+      'jump_mean_reversion_daemon',
+      'streaming_coherence_bounds',
+      'post_print_state_machine',
+      'nowcast_bucket_calibration',
+    ]);
+    for (const card of family?.cards ?? []) {
+      expect(card.prohibits).toContain('live_execution');
+      expect(card.deliverable).toMatch(/proposed_buildouts|state-machine|calibration/i);
+    }
+  });
+
+  it('keeps code_stat_exploit out of the mission pool', () => {
+    // A code/statistical exploit is not one method applied to many arenas; it
+    // is one artifact. It belongs in a stratified survey, not a fanout.
+    const family = loadTaxonomy(TAXONOMY_PATH).families.find((f) => f.id === 'code_stat_exploit');
+    expect(family?.mission_eligible).toBe(false);
+    expect(family?.always_reserve_slot).toBe(false);
   });
 
   it('carries the five primary_source_sniper cards', () => {
@@ -221,6 +245,11 @@ describe('deterministic seed compilation', () => {
 
     const deferredCard = result.excluded.find((e) => e.family_id === 'neg_risk_mm');
     expect(deferredCard?.reason).toMatch(/deferred/);
+  });
+
+  it('can seed a code_stat_exploit card once the budget is wide enough', () => {
+    const result = compileSeed({ ...baseInput(), maxCards: 50 });
+    expect(result.cards.some((c) => c.family_id === 'code_stat_exploit')).toBe(true);
   });
 
   it('stratifies across families before repeating one', () => {
