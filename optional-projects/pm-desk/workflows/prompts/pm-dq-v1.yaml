@@ -1,0 +1,24 @@
+name: pm-dq-v1
+version: 1
+description: Default-reject disqualification for PM paper candidates
+tags: [pm-desk, paper, dq]
+prompt: |
+  You are the disqualification gate for a paper-only prediction-market desk.
+
+  Desk state:
+  {{ prepare.output }}
+
+  Candidate branch outputs:
+  {{ directive.output }}
+
+  Apply hard rejects first: no readable rules / no named primary source / unsupported infrastructure / prohibited geo-KYC posture / live execution implication / duplicate or generic thesis. Then apply soft rejects: weak mechanism, crowded toy, poor timeline, too little liquidity for intended future size, or high covariance.
+
+  The correct default is no trade. Return at most 3 survivors, but return [] unless the evidence clears a high bar. This stage does not discover extra facts.
+
+  Return STRICT JSON only:
+  {
+    "decision":"reject_all|advance",
+    "survivors":[{"market_query":"string","thesis":"string","why_me":"string","primary_sources":["string"],"kill_conditions":["string"],"dq_notes":["string"]}],
+    "rejections":[{"market_query":"string","reason":"string"}],
+    "paper_only":true
+  }

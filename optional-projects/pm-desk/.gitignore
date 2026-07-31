@@ -1,0 +1,27 @@
+# Secrets — never commit real values. See .env.example for names.
+.env
+.env.*
+!.env.example
+
+# Dependencies / build output
+node_modules/
+dist/
+coverage/
+
+# Local desk state: SQLite DB, content-addressed artifacts, outbox, logs.
+data/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+logs/
+
+# Legacy scaffold artifacts
+artifacts/
+__pycache__/
+*.pyc
+
+# Agent harness scratch
+.claude-build-result.json
+.claude-build-stderr.log
+probe.mjs

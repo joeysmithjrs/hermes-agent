@@ -51,6 +51,7 @@ jobs:
       mcp_catalog: ${{ steps.classify.outputs.mcp_catalog }}
       ci_review: ${{ steps.classify.outputs.ci_review }}
       ci_review_files: ${{ steps.classify.outputs.ci_review_files }}
+      pm_desk: ${{ steps.classify.outputs.pm_desk }}
       event_name: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -91,6 +92,15 @@ jobs:
     needs: detect
     if: needs.detect.outputs.python == 'true' || needs.detect.outputs.frontend == 'true'
     uses: ./.github/workflows/e2e-desktop.yml
+
+  # optional-projects/pm-desk is self-contained: not an npm workspace, so the
+  # JS & TS matrix above cannot see it, and it needs Node 24 rather than the 22
+  # that lane pins. Its own lane runs only when its own files change.
+  pm-desk:
+    name: PM Desk
+    needs: detect
+    if: needs.detect.outputs.pm_desk == 'true'
+    uses: ./.github/workflows/pm-desk.yml
 
   docs-site:
     name: Docs Site
@@ -261,6 +271,7 @@ jobs:
       - lint
       - js-tests
       - e2e-desktop
+      - pm-desk
       - docs-site
       - history-check
       - contributor-check

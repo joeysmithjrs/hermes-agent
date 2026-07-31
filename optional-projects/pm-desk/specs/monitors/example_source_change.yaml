@@ -1,0 +1,35 @@
+# Rule: alert when a named primary source's content fingerprint changes.
+#
+# Declarative data, not code and not a prompt. The engine reads stored snapshots
+# and decides — no LLM is involved in detection.
+#
+#   pm-desk monitor evaluate --spec specs/monitors/example_source_change.yaml
+#
+# Prints SILENT when nothing changed; prints one schema-valid SignalEnvelope
+# when it did.
+
+id: example_source_change
+version: 1
+kind: primary_source_change
+enabled: true
+severity: high
+description: >
+  Fires when the sample official-release page changes. Pairs with
+  specs/sources/example_official_release.yaml.
+
+# Minimum seconds between two emissions from this rule.
+cooldown_s: 3600
+
+params:
+  source_id: example_official_release
+
+  # Refuse to alert on evidence older than this — a stale snapshot is not news.
+  max_staleness_s: 86400
+
+  # Ignore trivial edits (a fixed typo, a rotated timestamp).
+  min_diff_chars: 12
+
+  # Markets to attach to the emitted envelope for context. Intentionally empty:
+  # no live token is bound by default. Add one only after `market discover`
+  # gives you a real token id.
+  market_refs: []

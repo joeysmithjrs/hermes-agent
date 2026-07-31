@@ -1,0 +1,155 @@
+# PM Desk — paper research spine (prepare → seed → directive → DQ → DD → eval).
+#
+# This is the BROAD, operator-initiated research workflow. It is deliberately
+# separate from pm_signal_adjudication_v0, which is the narrow artifact-driven
+# path a detected signal triggers. Use this one to decide what the desk should
+# be watching; use that one to decide whether a specific detected change matters.
+#
+# ---------------------------------------------------------------------------
+# REFACTORED FROM THE ORIGINAL SCAFFOLD
+#
+# 1. Directive cards are no longer hardcoded here. They come from the
+#    deterministic seed compiler, which stratifies over the versioned taxonomy
+#    and excludes cards whose capability the desk lacks:
+#
+#      pm-desk taxonomy compile --max-cards 3 --json > /tmp/seed.json
+#
+#    So the research plan is reproducible from (run date, desk-state hash,
+#    nonce) rather than being whatever this file happened to list.
+#
+# 2. The `terminal` tool is gone from every node, and browsing is gone entirely.
+#    An agent must not get broad terminal/browser access merely to discover
+#    whether something changed — that is the collectors' job, and their output
+#    is immutable evidence in the local store.
+#
+# 3. Evidence enters as artifacts produced by `pm-desk source collect` and
+#    `pm-desk market discover`, not by agents free-roaming.
+#
+# There is intentionally no wallet, trading, browser-login, order-placement or
+# UMA node here, and the only human gate approves a PAPER plan.
+# ---------------------------------------------------------------------------
+
+workflow: pm_desk_paper_v0
+name: PM Desk — paper research spine
+version: 2
+# A shared, persistent directory at $HERMES_HOME/workflows/workspaces/pm-desk/,
+# created by Hermes and readable by the nodes below that hold `read_file`. It is
+# NOT a bind of this package's directory and NOT a per-node isolation boundary —
+# `spec.workspace` is override-only and no execution path enforces it. See the
+# README section "Workspaces (what the primitive actually is)".
+workspace: pm-desk
+max_budget_usd: 1.20
+
+defaults:
+  timeout_s: 300
+
+nodes:
+  - id: prepare
+    kind: agent
+    spec:
+      model: gpt-5.6-terra
+      provider: openrouter
+      prompt:
+        library: pm-prepare-context-v1
+      # Read-only session context. No terminal.
+      tools: [read_file, session_search]
+      max_turns: 4
+      budget_usd: 0.12
+
+  # Bounded directive cards, compiled deterministically outside this workflow.
+  # `echo` is one of the few allowlisted `run:` callables, so it carries the
+  # already-compiled cards through as a workflow value.
+  - id: seed
+    kind: script
+    run: workflow.examples.echo
+    idempotent: true
+    input:
+      directive_cards: "{{ input.directive_cards }}"
+      seed: "{{ input.seed }}"
+
+  - id: directive
+    kind: fanout
+    over: "{{ seed.output.echo.directive_cards }}"
+    max_branches: 3
+    branch:
+      kind: agent
+      spec:
+        model: gpt-5.6-terra
+        provider: openrouter
+        prompt:
+          library: pm-directive-v1
+          params:
+            template: "{{ branch.card_id }}"
+        # No tools at this stage. Turning a card into a research plan needs
+        # judgement, not a browser.
+        tools: []
+        max_turns: 6
+        budget_usd: 0.16
+
+  - id: dq
+    kind: agent
+    spec:
+      model: gpt-5.6-terra
+      provider: openrouter
+      prompt:
+        library: pm-dq-v1
+      tools: []
+      max_turns: 4
+      budget_usd: 0.10
+
+  - id: dd
+    kind: fanout
+    over: "{{ dq.output.survivors }}"
+    max_branches: 3
+    branch:
+      kind: agent
+      spec:
+        model: gpt-5.6-terra
+        provider: openrouter
+        prompt:
+          library: pm-dd-v1
+        # Read-only access to evidence the deterministic collectors already
+        # stored. No terminal, no browser: if the desk needs a new source, the
+        # answer is a new SourceSpec, not an agent browsing session.
+        tools: [read_file]
+        max_turns: 8
+        budget_usd: 0.22
+
+  - id: eval
+    kind: agent
+    spec:
+      model: gpt-5.6-terra
+      provider: openrouter
+      prompt:
+        library: pm-eval-v1
+      tools: []
+      max_turns: 5
+      budget_usd: 0.16
+
+  # The only human gate, and it approves a PAPER plan. There is no code path
+  # from an approval here to an order anywhere.
+  - id: paper_gate
+    kind: gate
+
+edges:
+  - { from: prepare, to: seed }
+  - { from: seed, to: directive }
+  - { from: directive, to: dq }
+  - { from: dq, to: dd, condition: "$.decision == 'advance'" }
+  - { from: dd, to: eval }
+  - { from: eval, to: paper_gate, condition: "$.decision == 'advance_one'" }
+
+gates:
+  paper_gate:
+    id: paper_gate
+    channel: telegram
+    approvers: [joe]
+    dual_control: true
+    on_timeout: shelve
+    timeout_s: 86400
+
+notify:
+  on: [failed, partial, awaiting_gate]
+
+triggers:
+  - { kind: manual }
