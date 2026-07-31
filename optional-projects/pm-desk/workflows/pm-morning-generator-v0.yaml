@@ -12,16 +12,15 @@
 # ---------------------------------------------------------------------------
 # MODEL / SPEND TIER (Joe 2026-07-31)
 #
-# This is an experiment-grade morning run, not a thrift flash pass. Cap is
-# elevated so promising edges are not starved mid-research. Roles are diverse
-# on purpose (different labs/routers), with critical judgement on the
-# terra / sonnet end of the catalog:
+# Experiment-grade morning: make it work first, optimize cost later.
+# No per-agent max_turns / budget_usd. Roles are diverse on purpose
+# (different labs/routers), critical judgement on terra / sonnet:
 #
 #   prepare      z-ai/glm-5.1              OR        cheap-strong context pack
 #   directive×N  grok-4.5                  xai-oauth SuperGrok (NOT OpenRouter)
 #   dq           gpt-5.6-terra             OR        hard filters (critical)
 #   dd           moonshotai/kimi-k2.5      OR        long research + tools
-#   eval_debate  glm + kimi + grok         mixed     adversarial council (tools empty)
+#   eval_debate  glm + kimi + grok         mixed     council WITH scout tools
 #     risk       grok-4.5                  xai-oauth SuperGrok
 #     judge      anthropic/claude-sonnet-5 OR        critical chair (critical)
 #   plan         gpt-5.6-terra             OR        ExecutionPlan JSON (critical)
@@ -40,25 +39,60 @@
 # Diversity of *models* is expressed by pinning different models on successive
 # nodes and on debate participants — not by branching on agent JSON fields.
 # ---------------------------------------------------------------------------
+# WORKSPACE (persistent across mornings)
+#
+# Top-level `workspace: pm-desk` pins every agent node to the named directory
+#   $HERMES_HOME/workflows/workspaces/pm-desk/
+# Layout Hermes creates:
+#   <dir>/                 # durable across runs (seed notes, living desk state)
+#   <dir>/runs/<run_id>/   # this morning's scratch + required stage artifacts
+# Agents get `{{ workspace.dir }}`, `{{ workspace.run_dir }}`, `{{ workspace.files }}`,
+# `{{ workspace.previous_runs }}` in prompts AND in delegate context. They MUST
+# write stage JSON into run_dir with write_file so later stages can re-open
+# evidence instead of trusting envelope text alone.
+# ---------------------------------------------------------------------------
 # PAPER ONLY — no wallet / order / UMA path exists here.
 # ---------------------------------------------------------------------------
 
 workflow: pm_morning_generator_v0
 name: PM Desk — morning generator (ExecutionPlan + approval gate)
-version: 2
+version: 3
 
 # Shared named workspace under $HERMES_HOME/workflows/workspaces/pm-desk/.
 # NOT a bind of this package directory.
 workspace: pm-desk
 
-# Experiment budget: Joe is willing to spend for quality. Node caps below sum
-# lower than this; the workflow-level ceiling is the hard kill switch.
-max_budget_usd: 12.00
+# No per-node turn/budget caps (Joe: make it work first; SuperGrok absorbs Grok).
+# Optional workflow ceiling left unset — do not thrift-starve research mornings.
 
 defaults:
   timeout_s: 900
   # Provider for every pinned model unless a node overrides.
   # (Nodes set model explicitly; provider repeated for clarity/isolation.)
+
+# Reused tool grants (YAML anchors). Scout stages + debate council share the
+# same research surface so the council can re-check markets/sources instead of
+# rubber-stamping DD prose. write_file is workspace-artifact only (prompt law).
+x-scout-tools: &scout_tools
+  - web_search
+  - web_extract
+  - x_search
+  - read_file
+  - write_file
+  - terminal
+  - browser_navigate
+  - browser_snapshot
+  - browser_click
+  - browser_scroll
+
+x-context-tools: &context_tools
+  - read_file
+  - write_file
+  - session_search
+
+x-plan-tools: &plan_tools
+  - read_file
+  - write_file
 
 nodes:
   # --- cheap-strong context pack (GLM) ------------------------------------
@@ -69,10 +103,7 @@ nodes:
       provider: openrouter
       prompt:
         library: pm-prepare-context-v1
-      tools: [read_file, session_search]
-      max_turns: 8
-      budget_usd: 0.80
-
+      tools: *context_tools
   # Cards compiled outside the workflow:
   #   pm-desk taxonomy compile --max-cards 4 --json > /tmp/seed.json
   - id: seed
@@ -84,8 +115,8 @@ nodes:
       seed: '{{ input.seed }}'
 
   # --- divergent ideation (Grok) — one branch per deterministic card ------
-  # Tools: web + X + pm-desk helpers via terminal (discover markets, peek store).
-  # No write_file/patch. Fanout still one model for all cards (Hermes limit).
+  # Tools: web + X + pm-desk helpers via terminal (discover markets, peek store)
+  # + write_file into the shared workspace run_dir.
   - id: directive
     kind: fanout
     over: '{{ seed.output.echo.directive_cards }}'
@@ -99,15 +130,7 @@ nodes:
           library: pm-directive-v1
           params:
             template: '{{ branch.card_id }}'
-        tools:
-          - web_search
-          - web_extract
-          - x_search
-          - read_file
-          - terminal
-        max_turns: 14
-        budget_usd: 1.40
-
+        tools: *scout_tools
   # --- hard DQ (Terra) — critical; open sources/markets before killing -----
   # Browserbase is NOT a workflow-native tool — it's a pm-desk CLI flag on
   # `source collect --live`. Hermes `browser_*` covers ordinary pages; PDFs
@@ -119,19 +142,7 @@ nodes:
       provider: openrouter
       prompt:
         library: pm-dq-v1
-      tools:
-        - web_search
-        - web_extract
-        - x_search
-        - read_file
-        - terminal
-        - browser_navigate
-        - browser_snapshot
-        - browser_click
-        - browser_scroll
-      max_turns: 16
-      budget_usd: 2.00
-
+      tools: *scout_tools
   # --- deep research (Kimi) — MUST verify markets + primary docs for real --
   # NOTE: spec.tools is a toolset subset grant, not a true ACL; sibling tools
   # in the same toolset may appear. No trading/signing tools exist in-package.
@@ -142,22 +153,10 @@ nodes:
       provider: openrouter
       prompt:
         library: pm-dd-v1
-      tools:
-        - web_search
-        - web_extract
-        - x_search
-        - read_file
-        - terminal
-        - browser_navigate
-        - browser_snapshot
-        - browser_click
-        - browser_scroll
-      max_turns: 40
-      budget_usd: 4.00
-
+      tools: *scout_tools
   # --- adversarial council (diverse) + Sonnet chair (critical) ------------
-  # Replaces the single monolithic eval agent. Participants argue YES / NO /
-  # RISK with empty tools; chair only runs if vote does not converge.
+  # Same tool surface as DQ/DD so the council can re-open workspace artifacts,
+  # markets, and primary sources instead of arguing only from envelope text.
   - id: eval_debate
     kind: debate
     protocol: judge_escalate
@@ -168,7 +167,8 @@ nodes:
         Prefer reject_all unless a survivor has a testable edge mechanism,
         named primary sources that DD actually verified with tools, a precise
         rules/resolution path, bounded horizon, and concrete monitor drafts.
-        PAPER ONLY — no live execution language.
+        Re-check workspace artifacts and the live data plane before trusting
+        or overturning upstream kill reasons. PAPER ONLY — no live execution.
       vote_key: verdict
       threshold: 2
       judge_model: anthropic/claude-sonnet-5
@@ -179,12 +179,17 @@ nodes:
         spec:
           model: anthropic/claude-sonnet-5
           provider: openrouter
-          max_turns: 8
-          budget_usd: 1.20
-          tools: []
+          tools: *scout_tools
           prompt: |
             You are the desk chair. The council did not converge after the
             allowed rounds. PAPER ONLY desk — no orders, no wallets.
+
+            WORKSPACE (persistent):
+              name: {{ workspace.name }}
+              dir:  {{ workspace.dir }}
+              this run: {{ workspace.run_dir }}
+              prior runs: {{ workspace.previous_runs }}
+              top-level files: {{ workspace.files }}
 
             Topic: {{ branch.topic }}
             Objective: {{ branch.objective }}
@@ -192,6 +197,15 @@ nodes:
 
             Desk context (prepare): {{ prepare.output }}
             DD dossiers: {{ dd.output }}
+
+            Before deciding, use tools:
+            1. read_file under {{ workspace.run_dir }}/ (desk_state, candidates,
+               dq.json, dd.json, any council notes).
+            2. If a kill rests on "no market / PDF unreachable", re-run pm-desk
+               discover/snapshot and Browserbase collect with
+               DESK_HOME={{ workspace.run_dir }}/desk-home before agreeing.
+            3. write_file your decision to
+               {{ workspace.run_dir }}/eval_chair.json
 
             Decide one of:
               - advance_one — name the single best thesis and why monitors can catch it
@@ -204,6 +218,8 @@ nodes:
               "selected_thesis": "string or empty",
               "rationale": "string",
               "monitor_bindings_hint": ["string"],
+              "checks_run": ["string"],
+              "workspace_artifacts_read": ["string"],
               "paper_only": true
             }
     participants:
@@ -212,52 +228,68 @@ nodes:
         spec:
           model: z-ai/glm-5.1
           provider: openrouter
-          max_turns: 8
-          budget_usd: 0.70
-          tools: []
+          tools: *scout_tools
           prompt: |
             You are the BULL on a PAPER-ONLY PM desk (round {{ branch.round }}/{{ branch.max_rounds }}).
             Make the strongest honest case that at least one DD survivor is
             worth installing monitors for — or admit the case is weak.
+
+            WORKSPACE (persistent across mornings):
+              dir={{ workspace.dir }}
+              run_dir={{ workspace.run_dir }}
+              previous_runs={{ workspace.previous_runs }}
+              files={{ workspace.files }}
 
             Topic: {{ branch.topic }}
             Prepare: {{ prepare.output }}
             DD: {{ dd.output }}
             Prior rounds: {{ branch.transcript }}
 
+            Do NOT argue only from envelope text. Before voting:
+            - read_file candidates / dq.json / dd.json under {{ workspace.run_dir }}
+            - if bull case needs a fact re-check, use web/browser/terminal
+              (pm-desk --home {{ workspace.run_dir }}/desk-home)
+            - write_file {{ workspace.run_dir }}/eval_bull_r{{ branch.round }}.json
+
             End with STRICT JSON:
-            {"verdict":"advance_one|reject_all","thesis":"string","why":"string","paper_only":true}
+            {"verdict":"advance_one|reject_all","thesis":"string","why":"string","checks_run":["string"],"paper_only":true}
 
       - id: bear
         kind: agent
         spec:
           model: moonshotai/kimi-k2.5
           provider: openrouter
-          max_turns: 8
-          budget_usd: 0.70
-          tools: []
+          tools: *scout_tools
           prompt: |
             You are the BEAR / default-reject on a PAPER-ONLY PM desk
             (round {{ branch.round }}/{{ branch.max_rounds }}). Kill anything that
             lacks a verified primary source, precise rules path, or observable
-            monitor. Most mornings should end reject_all.
+            monitor. Most mornings should end reject_all — but kill for thesis
+            reasons, not because you refused to open the workspace or data plane.
+
+            WORKSPACE:
+              dir={{ workspace.dir }}
+              run_dir={{ workspace.run_dir }}
+              previous_runs={{ workspace.previous_runs }}
 
             Topic: {{ branch.topic }}
             Prepare: {{ prepare.output }}
             DD: {{ dd.output }}
             Prior rounds: {{ branch.transcript }}
 
+            Before voting: read workspace stage JSON; re-verify contested
+            sources/markets with tools; write_file
+            {{ workspace.run_dir }}/eval_bear_r{{ branch.round }}.json
+
             End with STRICT JSON:
-            {"verdict":"advance_one|reject_all","thesis":"string","why":"string","paper_only":true}
+            {"verdict":"advance_one|reject_all","thesis":"string","why":"string","checks_run":["string"],"paper_only":true}
 
       - id: risk
         kind: agent
         spec:
           model: grok-4.5
           provider: xai-oauth
-          max_turns: 8
-          budget_usd: 0.70
-          tools: []
+          tools: *scout_tools
           prompt: |
             You are the RISK officer on a PAPER-ONLY PM desk
             (round {{ branch.round }}/{{ branch.max_rounds }}). Ignore narrative charm.
@@ -265,17 +297,26 @@ nodes:
             themes, spoiled thesis hashes, and whether monitors would actually
             fire on the right thing.
 
+            WORKSPACE:
+              dir={{ workspace.dir }}
+              run_dir={{ workspace.run_dir }}
+              previous_runs={{ workspace.previous_runs }}
+
             Topic: {{ branch.topic }}
             Prepare: {{ prepare.output }}
             DD: {{ dd.output }}
             Prior rounds: {{ branch.transcript }}
 
+            Re-open workspace artifacts and, if needed, live sources before you
+            path-kill. write_file
+            {{ workspace.run_dir }}/eval_risk_r{{ branch.round }}.json
+
             End with STRICT JSON:
-            {"verdict":"advance_one|reject_all","thesis":"string","why":"string","paper_only":true}
+            {"verdict":"advance_one|reject_all","thesis":"string","why":"string","checks_run":["string"],"paper_only":true}
 
   # --- package ExecutionPlan (Terra) — critical ---------------------------
-  # real schema enforcement is still `pm-desk plan validate` after the run;
-  # Hermes does not runtime-validate spec.output against model text.
+  # Plan may read/write workspace artifacts but does not re-research the book.
+  # Schema enforcement still pairs with `pm-desk plan validate` after the run.
   - id: plan
     kind: agent
     spec:
@@ -283,9 +324,7 @@ nodes:
       provider: openrouter
       prompt:
         library: pm-execution-plan-v1
-      tools: []
-      max_turns: 12
-      budget_usd: 1.50
+      tools: *plan_tools
       output:
         type: object
         required:

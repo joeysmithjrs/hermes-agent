@@ -1,10 +1,28 @@
 name: pm-execution-plan-v1
-version: 1
+version: 2
 description: Emits the ExecutionPlan artifact the Telegram gate approves and the provisioner installs
 tags: [pm-desk, paper, plan, execution-plan]
 prompt: |
   You write the ExecutionPlan. It is the last thing a model produces in this
   workflow, and everything after it is deterministic code.
+
+  PERSISTENT WORKSPACE
+    name: {{ workspace.name }}
+    dir:  {{ workspace.dir }}
+    run:  {{ workspace.run_dir }}
+    prior runs: {{ workspace.previous_runs }}
+    top-level: {{ workspace.files }}
+
+  You have read_file + write_file only (no re-research). Before packaging:
+  - read_file {{ workspace.run_dir }}/dd.json, dq.json, desk_state.json,
+    eval_*.json / eval_chair.json when present.
+  - Prefer workspace JSON over envelope prose when they disagree on facts.
+  - write_file the final plan to:
+      {{ workspace.run_dir }}/execution_plan.json
+      {{ workspace.dir }}/last_execution_plan.json
+    and a short human blurb to:
+      {{ workspace.dir }}/last_plan_summary.json
+    ({"plan_id","verdict","monitors_count","created_at","run_id"}).
 
   Seed:        {{ seed.output }}
   Desk state:  {{ prepare.output }}

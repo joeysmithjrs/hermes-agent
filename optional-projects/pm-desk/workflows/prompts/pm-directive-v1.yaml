@@ -1,5 +1,5 @@
 name: pm-directive-v1
-version: 2
+version: 3
 description: Tool-using candidate generator for a bounded paper-mode PM desk branch
 tags: [pm-desk, paper, directive]
 param_schema:
@@ -13,12 +13,31 @@ prompt: |
   Directive template: {{ params.template }}
   Desk state: {{ prepare.output }}
 
+  PERSISTENT WORKSPACE
+    name: {{ workspace.name }}
+    dir:  {{ workspace.dir }}
+    run:  {{ workspace.run_dir }}
+    prior runs: {{ workspace.previous_runs }}
+    top-level: {{ workspace.files }}
+
+  ARTIFACT LAW (non-optional)
+  - Read desk_state from {{ workspace.run_dir }}/desk_state.json (or
+    {{ workspace.dir }}/desk_state_latest.json) before inventing markets.
+  - Persist your final candidate JSON with write_file to:
+      {{ workspace.run_dir }}/directive_{{ params.template }}.json
+    Use a short slug if the template is long. Downstream DQ/DD/debate will
+    re-open this file — do not leave evidence only in chat text.
+  - Optional scratch under {{ workspace.run_dir }}/ only. Never write outside
+    {{ workspace.dir }}. Never touch wallets, orders, or Hermes config.
+
   You HAVE tools. Use them before you invent a market:
   - web_search / web_extract — rules pages, release calendars, official sources
   - x_search — public X chatter / event surfacing (read-only; not evidence of edge)
-  - terminal — ONLY pm-desk helper CLIs, always with an isolated desk home:
+  - browser_* — ordinary HTTPS HTML primary pages
+  - terminal — ONLY pm-desk helper CLIs, always with this morning's desk home:
        export PM_DESK_PKG=/opt/hermes-agent/optional-projects/pm-desk
-       export DESK_HOME=/tmp/pm-desk-dir-$RANDOM && mkdir -p "$DESK_HOME"
+       export DESK_HOME="{{ workspace.run_dir }}/desk-home"
+       mkdir -p "$DESK_HOME"
        cd "$PM_DESK_PKG"
        npx tsx src/cli/pm-desk.ts store init --home "$DESK_HOME"
        npx tsx src/cli/pm-desk.ts market discover --home "$DESK_HOME" --limit 10 --json
@@ -27,7 +46,7 @@ prompt: |
        npx tsx src/cli/pm-desk.ts taxonomy list
      Prefer --json / --limit. Never default-cwd SQLite.
      Do NOT start ingress, provision apply, or anything that trades.
-  - read_file — desk artifacts already on disk
+  - read_file / write_file — workspace artifacts only (paths above)
 
   Produce ONE candidate or reject. Never live orders, wallets, UMA, or KYC/geo bypass.
   Blind whale/leaderboard copy is not edge.
@@ -36,7 +55,7 @@ prompt: |
   why-now, primary sources (URLs you actually opened or that pm-desk returned), horizon,
   kill conditions. Mark which claims came from tools vs guesswork.
 
-  Return STRICT JSON only:
+  Return STRICT JSON only (same body written to the workspace file):
   {
     "template":"string",
     "candidate_status":"candidate|reject",
@@ -46,6 +65,7 @@ prompt: |
     "edge_mechanism":"string",
     "primary_sources":["URL or source description"],
     "tool_evidence":[{"tool":"string","what":"string"}],
+    "workspace_artifact":"absolute path you wrote",
     "horizon":"string",
     "kill_conditions":["string"],
     "dq_flags":["string"],
