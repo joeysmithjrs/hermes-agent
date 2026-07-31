@@ -165,16 +165,24 @@ describe('workflow capability boundary', () => {
     expect(specs[0]?.spec).not.toHaveProperty('deny_tools');
   });
 
-  it('no node in any shipped workflow can reach a writer, shell escape hatch abuse, or a sub-agent', () => {
-    // write/patch/delegate stay banned everywhere. terminal is allowed ONLY on
-    // generator directive + dq (+ dd may use it if needed) for pm-desk helper CLIs.
+  it('no node in any shipped workflow can reach shell escape hatch abuse or a sub-agent', () => {
+    // patch/delegate/execute_code stay banned everywhere.
+    // write_file is allowed on the morning generator for workspace artifacts only.
+    // terminal is allowed on generator scout + debate stages for pm-desk helper CLIs.
     const forbidden = [
       'close_terminal',
-      'write_file',
       'patch',
       'delegate_task',
       'execute_code',
     ];
+    const generatorResearchIds = (id: string) =>
+      id === 'dd' ||
+      id === 'dq' ||
+      id === 'directive.branch' ||
+      id.startsWith('directive') ||
+      id.startsWith('eval_debate.');
+    const generatorWriteIds = (id: string) =>
+      generatorResearchIds(id) || id === 'prepare' || id === 'plan';
     const violations: string[] = [];
 
     for (const file of ALL_WORKFLOWS) {
@@ -183,11 +191,12 @@ describe('workflow capability boundary', () => {
         for (const tool of spec.tools ?? []) {
           if (forbidden.includes(tool)) violations.push(`${file}:${id}: ${tool}`);
         }
-        // terminal is only ok inside the morning generator scout/verify stages
+        if ((spec.tools ?? []).includes('write_file')) {
+          const ok = file === GENERATOR_WORKFLOW_FILE && generatorWriteIds(id);
+          if (!ok) violations.push(`${file}:${id}: write_file (not allowed here)`);
+        }
         if ((spec.tools ?? []).includes('terminal')) {
-          const ok =
-            file === GENERATOR_WORKFLOW_FILE &&
-            (id === 'dd' || id === 'dq' || id === 'directive.branch' || id.startsWith('directive'));
+          const ok = file === GENERATOR_WORKFLOW_FILE && generatorResearchIds(id);
           if (!ok) violations.push(`${file}:${id}: terminal (not allowed here)`);
         }
       }
@@ -195,7 +204,7 @@ describe('workflow capability boundary', () => {
     expect(violations).toEqual([]);
   });
 
-  it('research/browser tools stay inside the generator; scout stages can browse', () => {
+  it('research/browser tools stay inside the generator; scout + debate can browse', () => {
     const browser = ['browser_navigate', 'browser_snapshot', 'browser_click', 'browser_scroll'];
     const withBrowser: string[] = [];
     const webish = ['web_search', 'web_extract', 'x_search', 'terminal'];
@@ -208,42 +217,68 @@ describe('workflow capability boundary', () => {
         if (tools.some((t) => webish.includes(t))) withWebish.push(`${file}:${id}`);
       }
     }
-    // Directive, DQ, DD may all research; no other workflow may.
+    // Directive, DQ, DD, and debate council may research; no other workflow may.
     const gen = GENERATOR_WORKFLOW_FILE;
-    expect(withBrowser.sort()).toEqual(
-      [`${gen}:dd`, `${gen}:dq`, `${gen}:directive.branch`].sort().filter((x) =>
-        // directive may not always have browser — only dd+dq required
-        withBrowser.includes(x),
-      ).length >= 2
-        ? withBrowser.sort()
-        : withBrowser.sort(),
-    );
     expect(withBrowser).toEqual(expect.arrayContaining([`${gen}:dd`, `${gen}:dq`]));
     expect(withBrowser.every((x) => x.startsWith(gen))).toBe(true);
+    expect(withBrowser.some((x) => x.includes('eval_debate'))).toBe(true);
     expect(withWebish).toEqual(
-      expect.arrayContaining([`${gen}:dd`, `${gen}:dq`, `${gen}:directive.branch`]),
+      expect.arrayContaining([
+        `${gen}:dd`,
+        `${gen}:dq`,
+        `${gen}:directive.branch`,
+      ]),
     );
+    expect(withWebish.some((x) => x.includes('eval_debate'))).toBe(true);
     expect(withWebish.every((x) => x.startsWith(gen))).toBe(true);
   });
 
-    it('plan + debate council stay tools-empty (judgement only)', () => {
-      const specs = agentSpecs(loadWorkflow(GENERATOR_WORKFLOW_FILE));
-      const byId = new Map(specs.map((s) => [s.id, s]));
-          expect(byId.get('plan')?.spec.tools).toEqual([]);
-      const debateAgents = specs.filter((s) => s.id.startsWith('eval_debate.'));
-      expect(debateAgents.length).toBeGreaterThanOrEqual(3);
-      for (const { id, spec } of debateAgents) {
-        expect(spec.tools, `${id} must declare tools: []`).toEqual([]);
+  it('debate council shares scout tools; plan is workspace read/write only', () => {
+    const specs = agentSpecs(loadWorkflow(GENERATOR_WORKFLOW_FILE));
+    const byId = new Map(specs.map((s) => [s.id, s]));
+    const scoutCore = [
+      'web_search',
+      'web_extract',
+      'x_search',
+      'read_file',
+      'write_file',
+      'terminal',
+      'browser_navigate',
+      'browser_snapshot',
+    ];
+    const debateAgents = specs.filter((s) => s.id.startsWith('eval_debate.'));
+    expect(debateAgents.length).toBeGreaterThanOrEqual(3);
+    for (const { id, spec } of debateAgents) {
+      for (const t of scoutCore) {
+        expect(spec.tools, `${id} missing ${t}`).toEqual(expect.arrayContaining([t]));
       }
-    });
+    }
+    const planTools = byId.get('plan')?.spec.tools ?? [];
+    expect(planTools).toEqual(expect.arrayContaining(['read_file', 'write_file']));
+    expect(planTools).not.toEqual(
+      expect.arrayContaining(['terminal', 'web_search', 'browser_navigate']),
+    );
+    const prepareTools = byId.get('prepare')?.spec.tools ?? [];
+    expect(prepareTools).toEqual(
+      expect.arrayContaining(['read_file', 'write_file', 'session_search']),
+    );
+  });
 
-  it('the generator pins diverse models and a healthy experiment budget', () => {
+  it('generator pins the persistent pm-desk workspace', () => {
+    const doc = loadWorkflow(GENERATOR_WORKFLOW_FILE);
+    expect(doc.workspace).toBe('pm-desk');
+  });
+
+  it('the generator pins diverse models without per-agent thrift caps', () => {
     const raw = readFileSync(packageWorkflowPath(GENERATOR_WORKFLOW_FILE), 'utf8');
     const doc = parseYaml(raw) as {
       max_budget_usd?: number;
-      nodes: { id: string; kind: string; spec?: { model?: string }; participants?: { spec?: { model?: string } }[]; directive?: { judge?: { spec?: { model?: string } }; judge_model?: string } }[];
+      nodes: { id: string; kind: string; spec?: { model?: string; max_turns?: number; budget_usd?: number }; participants?: { spec?: { model?: string; max_turns?: number; budget_usd?: number } }[]; directive?: { judge?: { spec?: { model?: string; max_turns?: number; budget_usd?: number } }; judge_model?: string } }[];
     };
-    expect(doc.max_budget_usd ?? 0).toBeGreaterThanOrEqual(10);
+    // Make-it-work first: no workflow thrift kill required; if present must not be toy.
+    if (doc.max_budget_usd !== undefined && doc.max_budget_usd !== null) {
+      expect(doc.max_budget_usd).toBeGreaterThanOrEqual(10);
+    }
     const models = new Set<string>();
     for (const n of doc.nodes) {
       if (n.spec?.model) models.add(n.spec.model);
@@ -252,6 +287,11 @@ describe('workflow capability boundary', () => {
       }
       if (n.directive?.judge?.spec?.model) models.add(n.directive.judge.spec.model);
       if (n.directive?.judge_model) models.add(n.directive.judge_model);
+    }
+    // No per-agent turn/budget thrift caps on any agent-bearing spec.
+    for (const { id, spec } of agentSpecs(loadWorkflow(GENERATOR_WORKFLOW_FILE))) {
+      expect(spec, id).not.toHaveProperty('max_turns');
+      expect(spec, id).not.toHaveProperty('budget_usd');
     }
     // Diversity floor: at least four distinct model ids in the morning graph.
     expect(models.size).toBeGreaterThanOrEqual(4);
