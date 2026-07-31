@@ -75,6 +75,14 @@ HERMES (optional binding; dry-run by default, never edits Hermes config)
   hermes workflows                Print the shipped workflows and their paths
   hermes install-prompts          Plan the prompt-library install (--apply to write)
 
+RESEARCH (paper only; edge detector, never an order)
+  research cpi-calibrate --nowcasts <csv> --prints <csv>
+                                  P(BLS CPI YoY print rounds into a 0.1% bucket),
+                                  compared to a Polymarket mid (--mid). Fail-closed
+                                  if the no-look-ahead sample is too small.
+                                  --live-nowcast 3.42 --bucket 3.4 --as-of YYYY-MM-DD
+                                  --json  (live fetch needs PM_DESK_LIVE_CPI=1)
+
 GLOBAL FLAGS
   --home <dir>   Desk home (default $PM_DESK_HOME or ./data)
   --json         Machine-readable output
@@ -107,6 +115,8 @@ async function loadHandler(command: string): Promise<Handler | undefined> {
       return (await import('./commands/provision.js')).provisionCommand;
     case 'hermes':
       return (await import('./commands/hermes.js')).hermesCommand;
+    case 'research':
+      return (await import('./commands/research.js')).researchCommand;
     default:
       return undefined;
   }

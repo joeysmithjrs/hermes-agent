@@ -1,0 +1,210 @@
+/**
+ * `pm-desk research` — paper-only research harnesses.
+ *
+ * Currently hosts the CPI nowcast-to-bucket calibration harness, which converts
+ * historical nowcast error into P(BLS CPI print lands in a one-decimal contract
+ * bucket) and compares that to a Polymarket mid. The decision label is research
+ * only and is never an order.
+ */
+
+import { UsageError } from '../../core/errors.js';
+import {
+  fetchBlsYoy,
+  fetchClevelandNowcasts,
+  loadNowcastsCsv,
+  loadPrintsCsv,
+} from '../../research/cpi_nowcast/loaders/index.js';
+import { runCalibration } from '../../research/cpi_nowcast/index.js';
+import type { CalibrationResult, NowcastRow, PrintRow } from '../../research/cpi_nowcast/types.js';
+import type { Flags } from '../args.js';
+import { emit } from '../output.js';
+
+const CPI_HELP = `pm-desk research cpi-calibrate — PAPER-ONLY CPI nowcast calibration
+
+Converts historical nowcast error (nowcast vs actual BLS print) into the
+probability that the next BLS CPI YoY print rounds into a one-decimal contract
+bucket, then optionally compares that to a Polymarket mid.
+
+USAGE
+  pm-desk research cpi-calibrate \\
+    --nowcasts <csv> --prints <csv> \\
+    --as-of YYYY-MM-DD --live-nowcast 3.42 --bucket 3.4 \\
+    [--mid 0.43] [--min-n 12] [--half-spread 0.01] [--model-haircut 0.05] \\
+    [--json]
+
+INPUTS
+  --nowcasts <csv>   CSV with columns: ref_month, vintage_date, nowcast
+  --prints   <csv>   CSV with columns: ref_month, release_date, yoy
+  --live-nowcast     The live nowcast used as the calibration anchor (e.g. 3.42)
+  --bucket           The one-decimal contract bucket to score (e.g. 3.4)
+  --as-of YYYY-MM-DD Vintage date for live fetches (used by --fetch-* only)
+
+OPTIONAL MARKET + THRESHOLDS
+  --mid              Polymarket mid for the bucket contract (skip for model-only)
+  --min-n            Minimum no-look-ahead pairs; below this → fail_closed (default 12)
+  --half-spread      Half-spread buffer vs the mid (default 0.01)
+  --model-haircut    Model-haircut buffer vs the mid (default 0.05)
+
+LIVE FETCH (opt-in; never run in hermetic tests; no credentials)
+  --fetch-cleveland  Live-fetch the latest Cleveland Fed nowcast (needs PM_DESK_LIVE_CPI=1)
+  --fetch-bls        Live-fetch recent BLS CPI YoY prints (needs PM_DESK_LIVE_CPI=1)
+
+OUTPUT
+  --json             Emit the strict-ish CalibrationResult JSON
+
+PAPER ONLY. This command cannot trade, sign, place an order or touch a wallet.
+`;
+
+export async function researchCommand(sub: string | undefined, flags: Flags): Promise<number> {
+  switch (sub) {
+    case 'cpi-calibrate':
+      return cpiCalibrate(flags);
+    default:
+      throw new UsageError(`unknown \`research\` subcommand: ${sub ?? '(none)'}`, {
+        hint: 'Try: pm-desk research cpi-calibrate --help',
+      });
+  }
+}
+
+async function cpiCalibrate(flags: Flags): Promise<number> {
+  if (flags.bool('help')) {
+    process.stdout.write(`${CPI_HELP}\n`);
+    return 0;
+  }
+
+  const json = flags.bool('json');
+  const nowcastPath = flags.str('nowcasts');
+  const printPath = flags.str('prints');
+  const liveNowcastRaw = flags.str('live-nowcast');
+  const bucketRaw = flags.str('bucket');
+  const midRaw = flags.str('mid');
+  const asOf = flags.str('as-of');
+  const minN = flags.int('min-n', 12)!;
+  const halfSpread = Number(flags.str('half-spread', '0.01')!);
+  const modelHaircut = Number(flags.str('model-haircut', '0.05')!);
+  const fetchCleveland = flags.bool('fetch-cleveland');
+  const fetchBls = flags.bool('fetch-bls');
+  flags.rejectUnknown('research cpi-calibrate');
+
+  if (liveNowcastRaw === undefined) {
+    throw new UsageError('missing required flag --live-nowcast', {
+      hint: 'Pass the live nowcast anchor, e.g. --live-nowcast 3.42.',
+    });
+  }
+  const liveNowcast = Number(liveNowcastRaw);
+  if (!Number.isFinite(liveNowcast)) {
+    throw new UsageError(`--live-nowcast must be a number, got ${JSON.stringify(liveNowcastRaw)}`, {
+      hint: 'Example: --live-nowcast 3.42',
+    });
+  }
+  if (bucketRaw === undefined) {
+    throw new UsageError('missing required flag --bucket', {
+      hint: 'Pass the one-decimal bucket to score, e.g. --bucket 3.4.',
+    });
+  }
+  const bucket = Number(bucketRaw);
+  if (!Number.isFinite(bucket)) {
+    throw new UsageError(`--bucket must be a number, got ${JSON.stringify(bucketRaw)}`, {
+      hint: 'Example: --bucket 3.4',
+    });
+  }
+  if (!Number.isFinite(halfSpread) || halfSpread < 0) {
+    throw new UsageError('--half-spread must be a non-negative number', {
+      hint: 'Example: --half-spread 0.01',
+    });
+  }
+  if (!Number.isFinite(modelHaircut) || modelHaircut < 0) {
+    throw new UsageError('--model-haircut must be a non-negative number', {
+      hint: 'Example: --model-haircut 0.05',
+    });
+  }
+
+  let mid: number | null = null;
+  if (midRaw !== undefined) {
+    mid = Number(midRaw);
+    if (!Number.isFinite(mid) || mid < 0 || mid > 1) {
+      throw new UsageError('--mid must be a probability in [0,1]', {
+        hint: 'Example: --mid 0.43',
+      });
+    }
+  }
+
+  const notes: string[] = [];
+
+  // Load fixture nowcasts/prints, then optionally overlay live rows.
+  let nowcasts: NowcastRow[] = [];
+  let prints: PrintRow[] = [];
+  if (nowcastPath) nowcasts = loadNowcastsCsv(nowcastPath);
+  if (printPath) prints = loadPrintsCsv(printPath);
+
+  if (fetchCleveland) {
+    if (!asOf) {
+      throw new UsageError('--fetch-cleveland requires --as-of YYYY-MM-DD', {
+        hint: 'The as-of date anchors the live nowcast vintage.',
+      });
+    }
+    const rows = await fetchClevelandNowcasts(asOf);
+    if (rows.length > 0) {
+      notes.push(`using ${rows.length} live Cleveland nowcast row(s)`);
+      nowcasts = [...nowcasts, ...rows];
+    }
+  }
+  if (fetchBls) {
+    const rows = await fetchBlsYoy();
+    if (rows.length > 0) {
+      notes.push(`using ${rows.length} live BLS print row(s)`);
+      // De-dup by refMonth, preferring the live row.
+      const map = new Map<string, PrintRow>();
+      for (const p of [...prints, ...rows]) map.set(p.refMonth, p);
+      prints = [...map.values()];
+    }
+  }
+
+  if (nowcasts.length === 0) {
+    throw new UsageError('no nowcast rows available', {
+      hint: 'Pass --nowcasts <csv>, or --fetch-cleveland with PM_DESK_LIVE_CPI=1.',
+    });
+  }
+  if (prints.length === 0) {
+    throw new UsageError('no print rows available', {
+      hint: 'Pass --prints <csv>, or --fetch-bls with PM_DESK_LIVE_CPI=1.',
+    });
+  }
+
+  const result = runCalibration(nowcasts, prints, {
+    liveNowcast,
+    bucket,
+    mid,
+    minN,
+    buffer: { halfSpread, modelHaircut },
+    notes,
+  });
+
+  emit({ json }, result, () => humanSummary(result));
+  return 0;
+}
+
+function humanSummary(r: CalibrationResult): string {
+  const lines = [
+    '[PAPER ONLY] CPI nowcast → bucket calibration',
+    `  sample_size      ${r.sample_size} (min_n 12)`,
+    `  residual mean    ${r.residual_mean.toFixed(3)}  rmse ${r.residual_rmse.toFixed(3)}`,
+    `  live_nowcast     ${r.live_nowcast}  →  bucket ${r.bucket}`,
+    `  P(bucket)        ${r.p_bucket}`,
+    `  bucket_probs     ${formatProbs(r.bucket_probs)}`,
+  ];
+  if (r.mid !== null) {
+    lines.push(
+      `  mid              ${r.mid}  edge_vs_mid ${r.edge_vs_mid}  (buffer ${r.buffer.halfSpread}+${r.buffer.modelHaircut})`,
+    );
+  }
+  lines.push(`  decision         ${r.decision}${r.fail_reason ? `  (${r.fail_reason})` : ''}`);
+  for (const n of r.notes) lines.push(`  note             ${n}`);
+  return lines.join('\n');
+}
+
+function formatProbs(probs: Record<string, number>): string {
+  return Object.entries(probs)
+    .map(([k, v]) => `${k}:${v}`)
+    .join('  ');
+}
