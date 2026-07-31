@@ -32,6 +32,7 @@ intentional_reason() {
     package-lock.json) echo "follows package.json" ;;
     eslint.config.js)  echo "eslint 10 type-checks scripts/*.mjs" ;;
     README.md)         echo "Node 24, advisories, prompt install, workspaces, cron, CI" ;;
+    .env.example)      echo "accurate launcher variable names and semantics" ;;
     src/cli/pm-desk.ts) echo "registers the \`hermes\` subcommand" ;;
     src/ingress/dispatcher.ts) echo "absolute default workflow path + dryRun option" ;;
     workflows/pm-signal-adjudication-v0.yaml) echo "drops unusable \`workspace:\` on a tools-empty node" ;;
