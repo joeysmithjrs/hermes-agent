@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { UsageError } from '../../core/errors.js';
 import { resolveHermesHome } from '../../hermes/prompts.js';
 import { DEFAULT_GATE_ID, readGateSignal, stampApproval } from '../../plan/approval.js';
-import { DEFAULT_PLAN_NODE_ID, planFromRun } from '../../plan/from-run.js';
+import { DEFAULT_PLAN_NODE_ID, DEFAULT_WORKSPACE, planFromRun } from '../../plan/from-run.js';
 import { renderPlanSummary, renderPlanTelegram } from '../../plan/render.js';
 import {
   executionPlanJsonSchema,
@@ -80,11 +80,12 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
     case 'from-run': {
       const runId = flags.required('run-id', 'A Hermes run id from `hermes workflow list`.');
       const nodeId = flags.str('node', DEFAULT_PLAN_NODE_ID)!;
+      const workspace = flags.str('workspace', DEFAULT_WORKSPACE)!;
       const hermesHome = resolveHermesHome(flags.str('hermes-home'));
       const out = flags.str('out');
       flags.rejectUnknown('plan from-run');
 
-      const found = planFromRun({ hermesHome, runId, nodeId });
+      const found = planFromRun({ hermesHome, runId, nodeId, workspace });
       if (out) writeFileSync(out, `${JSON.stringify(found.plan, null, 2)}\n`, 'utf8');
 
       emit(
@@ -92,7 +93,8 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
         {
           plan_id: found.plan.plan_id,
           source_path: found.source_path,
-          node_run_id: found.node_run_id,
+          source_kind: found.source_kind,
+          ...(found.node_run_id ? { node_run_id: found.node_run_id } : {}),
           ...(found.node_id ? { node_id: found.node_id } : {}),
           ...(out ? { written_to: out } : {}),
           plan: found.plan,
@@ -100,7 +102,11 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
         () =>
           [
             `found ExecutionPlan ${found.plan.plan_id}`,
-            `  node       ${found.node_id ?? '(unmapped)'} · node_run ${found.node_run_id}`,
+            found.source_kind === 'node_output'
+              ? `  node       ${found.node_id ?? '(unmapped)'} · node_run ${found.node_run_id}`
+              : // Worth saying out loud: the node envelope held no usable plan,
+                // so the gate never opened and this came off disk instead.
+                '  source     workspace artifact (the plan node emitted no parseable JSON)',
             `  read from  ${found.source_path}`,
             out ? `  written to ${out}` : '  (pass --out <file> to save it)',
           ].join('\n'),

@@ -112,6 +112,15 @@ describe('planFromRun', () => {
     writeFileSync(join(dir, 'output.json'), JSON.stringify(output), 'utf8');
   };
 
+  const writeWorkspaceFile = (name: string, body: string, workspace = 'pm-desk') => {
+    const dir = join(home, 'workflows', 'workspaces', workspace, 'runs', runId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, name), body, 'utf8');
+  };
+
+  const writeWorkspacePlan = (plan: unknown) =>
+    writeWorkspaceFile('execution_plan.json', JSON.stringify(plan, null, 2));
+
   const writeCheckpoint = (byNode: Record<string, string[]>) => {
     const dir = join(home, 'workflows', 'runs', runId);
     mkdirSync(dir, { recursive: true });
@@ -180,6 +189,76 @@ describe('planFromRun', () => {
     } catch (err) {
       expect((err as UsageError).hint).toContain('paper_only');
     }
+  });
+
+  it('recovers the plan the agent wrote to the workspace when its text was markdown', () => {
+    // The wf_9e6e868d97f1 shape: a valid plan on disk, prose in the envelope.
+    const plan = fixturePlan();
+    writeCheckpoint({ plan: ['nr_plan_1'] });
+    writeNodeOutput('nr_plan_1', {
+      node: 'plan',
+      text: '## Execution plan\n\n- Wrote the plan to the workspace.\n- Monitors: 2\n',
+    });
+    writeWorkspacePlan(plan);
+
+    const found = planFromRun({ hermesHome: home, runId });
+    expect(found.plan.plan_id).toBe(plan.plan_id);
+    expect(found.source_kind).toBe('workspace_artifact');
+    expect(found.source_path).toContain(join('workspaces', 'pm-desk', 'runs', runId));
+    expect(found.node_run_id).toBeUndefined();
+  });
+
+  it('recovers from the workspace when the run produced no node outputs at all', () => {
+    const plan = fixturePlan();
+    writeWorkspacePlan(plan);
+    expect(planFromRun({ hermesHome: home, runId }).plan.plan_id).toBe(plan.plan_id);
+  });
+
+  it('prefers the node envelope over the workspace artifact when both parse', () => {
+    const plan = fixturePlan();
+    writeNodeOutput('nr_plan', { node: 'plan', text: JSON.stringify(plan) });
+    writeWorkspacePlan({ ...plan, plan_id: 'plan_stale_from_disk' });
+
+    const found = planFromRun({ hermesHome: home, runId });
+    expect(found.plan.plan_id).toBe(plan.plan_id);
+    expect(found.source_kind).toBe('node_output');
+  });
+
+  it('reads a plan an agent wrapped in a fence inside the workspace file', () => {
+    const plan = fixturePlan();
+    writeWorkspaceFile(
+      'execution_plan.json',
+      `\`\`\`json\n${JSON.stringify(plan, null, 2)}\n\`\`\`\n`,
+    );
+    expect(planFromRun({ hermesHome: home, runId }).plan.plan_id).toBe(plan.plan_id);
+  });
+
+  it('reports the workspace it searched when neither layer holds a plan', () => {
+    writeNodeOutput('nr_plan', { node: 'plan', text: 'no json here' });
+    try {
+      planFromRun({ hermesHome: home, runId });
+      throw new Error('expected planFromRun to throw');
+    } catch (err) {
+      expect((err as UsageError).hint).toContain(join('workspaces', 'pm-desk', 'runs', runId));
+    }
+  });
+
+  it('honours a non-default workspace name', () => {
+    const plan = fixturePlan();
+    writeNodeOutput('nr_plan', { node: 'plan', text: 'no json here' });
+    writeWorkspaceFile('execution_plan.json', JSON.stringify(plan), 'other-desk');
+
+    // The default workspace is a different directory and must not be searched.
+    expect(() => planFromRun({ hermesHome: home, runId })).toThrow(/no valid ExecutionPlan/);
+    expect(planFromRun({ hermesHome: home, runId, workspace: 'other-desk' }).plan.plan_id).toBe(
+      plan.plan_id,
+    );
+  });
+
+  it('does not promote an invalid workspace artifact', () => {
+    const plan = fixturePlan();
+    writeWorkspacePlan({ ...plan, paper_only: false });
+    expect(() => planFromRun({ hermesHome: home, runId })).toThrow(/no valid ExecutionPlan/);
   });
 
   it('refuses to choose when a run holds two different plans', () => {

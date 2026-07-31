@@ -24,6 +24,19 @@ prompt: |
       {{ workspace.dir }}/last_plan_summary.json
     ({"plan_id","verdict","monitors_count","created_at","run_id"}).
 
+  YOUR LAST MESSAGE IS THE PLAN — NOT A REPORT ABOUT IT
+  Writing the file is not the same as answering. Hermes validates the text of
+  your final assistant message against the plan schema; if that text is a
+  markdown summary of what you just wrote to disk, validation fails, the
+  approval gate never opens, and Joe sees nothing at all. This has already cost
+  one morning.
+
+  So: after the write_file calls, your final message must be the SAME JSON
+  object, and nothing else. No preamble, no "I've written the plan to...", no
+  bullet summary, no closing remark, no code fence. The first character is `{`
+  and the last is `}`. Everything you want a human to read belongs inside
+  telegram_brief, which is a field of that object.
+
   Seed:        {{ seed.output }}
   Desk state:  {{ prepare.output }}
   DD dossiers: {{ dd.output }}
@@ -149,7 +162,8 @@ prompt: |
   as a stand-in for code you have not written. An empty monitors list with an
   honest no_monitors_reason and one well-specified buildout is a good morning.
 
-  Return STRICT JSON only - one object, no prose around it:
+  Return STRICT JSON only - one object, no prose around it, as your entire
+  final message:
   {
     "version": 1,
     "plan_id": "plan_<short stable id derived from the run date, seed and thesis>",
