@@ -139,6 +139,65 @@ def _new_child_node_run_id(run_id: str, kind: str, node_id: str, stage: str, age
 _INTERNAL_CHILD_KINDS = ("debate", "supervisor")
 
 
+def _parse_loose_json(text: str) -> Any:
+    """JSON a model may fence or bury in prose — best-effort, never raises."""
+    import json
+    import re
+
+    trimmed = (text or "").strip()
+    if not trimmed:
+        return None
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", trimmed, re.IGNORECASE)
+    body = (fenced.group(1) if fenced else trimmed).strip()
+    try:
+        return json.loads(body)
+    except Exception:
+        pass
+    start = body.find("{")
+    end = body.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            return json.loads(body[start : end + 1])
+        except Exception:
+            return None
+    return None
+
+
+def _schema_instance_candidates(output: Any) -> list[Any]:
+    """Ordered list of bodies SCHEMA might apply to (agent envelopes etc.)."""
+    candidates: list[Any] = []
+    seen: set[int] = set()
+
+    def add(obj: Any) -> None:
+        if obj is None:
+            return
+        i = id(obj)
+        if i in seen:
+            return
+        seen.add(i)
+        candidates.append(obj)
+
+    add(output)
+    if isinstance(output, dict):
+        for key in ("result", "text", "output", "summary"):
+            value = output.get(key)
+            if isinstance(value, str):
+                add(_parse_loose_json(value))
+            else:
+                add(value)
+        res = output.get("result")
+        if isinstance(res, dict):
+            for key in ("summary", "text", "output"):
+                value = res.get(key)
+                if isinstance(value, str):
+                    add(_parse_loose_json(value))
+                else:
+                    add(value)
+    elif isinstance(output, str):
+        add(_parse_loose_json(output))
+    return candidates
+
+
 def _validate_output_schema(spec_output: Dict[str, Any], output: Any) -> Optional[str]:
     """TASK 6: opt-in output schema validation for an agent/script node's
     result. ``spec_output`` is ``NodeSpec.output`` -- a JSON Schema dict (or
@@ -151,47 +210,66 @@ def _validate_output_schema(spec_output: Dict[str, Any], output: Any) -> Optiona
     "required" key presence for object schemas). Never hard-depends on a new
     package -- absence of `jsonschema` degrades the check, it doesn't disable
     the feature or raise ImportError.
+
+    For agent envelopes, every plausible nested body is tried; success on any
+    candidate is success (models put JSON in ``text`` while the envelope keeps
+    Hermes bookkeeping fields).
     """
     if not isinstance(spec_output, dict) or not spec_output:
         return None
     if set(spec_output.keys()) == {"$ref"}:
         return None  # unresolved $ref-only schema: nothing to check here
+
+    candidates = _schema_instance_candidates(output)
     try:
         import jsonschema  # type: ignore
     except Exception:
         jsonschema = None  # type: ignore
 
+    errors: list[str] = []
     if jsonschema is not None:
-        try:
-            jsonschema.validate(instance=output, schema=spec_output)
-            return None
-        except jsonschema.exceptions.ValidationError as exc:  # type: ignore[attr-defined]
-            return str(getattr(exc, "message", exc))
-        except Exception as exc:
-            return f"schema validation error: {exc}"
+        for instance in candidates:
+            try:
+                jsonschema.validate(instance=instance, schema=spec_output)
+                return None
+            except jsonschema.exceptions.ValidationError as exc:  # type: ignore[attr-defined]
+                errors.append(str(getattr(exc, "message", exc)))
+            except Exception as exc:
+                errors.append(f"schema validation error: {exc}")
+        return errors[0] if errors else "schema validation failed"
 
+    # Minimal structural fallback — any candidate may pass.
+    for instance in candidates:
+        msg = _minimal_schema_check(spec_output, instance)
+        if msg is None:
+            return None
+        errors.append(msg)
+    return errors[0] if errors else "schema validation failed"
+
+
+def _minimal_schema_check(spec_output: Dict[str, Any], instance: Any) -> Optional[str]:
     expected_type = spec_output.get("type")
     if expected_type == "object":
-        if not isinstance(output, dict):
-            return f"expected object output, got {type(output).__name__}"
+        if not isinstance(instance, dict):
+            return f"expected object output, got {type(instance).__name__}"
         for req in spec_output.get("required") or []:
-            if req not in output:
+            if req not in instance:
                 return f"missing required field '{req}'"
     elif expected_type == "array":
-        if not isinstance(output, list):
-            return f"expected array output, got {type(output).__name__}"
+        if not isinstance(instance, list):
+            return f"expected array output, got {type(instance).__name__}"
     elif expected_type == "string":
-        if not isinstance(output, str):
-            return f"expected string output, got {type(output).__name__}"
+        if not isinstance(instance, str):
+            return f"expected string output, got {type(instance).__name__}"
     elif expected_type == "boolean":
-        if not isinstance(output, bool):
-            return f"expected boolean output, got {type(output).__name__}"
+        if not isinstance(instance, bool):
+            return f"expected boolean output, got {type(instance).__name__}"
     elif expected_type == "integer":
-        if not isinstance(output, int) or isinstance(output, bool):
-            return f"expected integer output, got {type(output).__name__}"
+        if not isinstance(instance, int) or isinstance(instance, bool):
+            return f"expected integer output, got {type(instance).__name__}"
     elif expected_type == "number":
-        if not isinstance(output, (int, float)) or isinstance(output, bool):
-            return f"expected number output, got {type(output).__name__}"
+        if not isinstance(instance, (int, float)) or isinstance(instance, bool):
+            return f"expected number output, got {type(instance).__name__}"
     return None
 
 

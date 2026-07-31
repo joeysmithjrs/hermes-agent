@@ -17,17 +17,19 @@
 # on purpose (different labs/routers), with critical judgement on the
 # terra / sonnet end of the catalog:
 #
-#   prepare      z-ai/glm-5.1              cheap-strong context pack
-#   directive×N  x-ai/grok-4.5             divergent ideation per card
-#   dq           gpt-5.6-terra             hard filters (critical)
-#   dd           moonshotai/kimi-k2.5      long research + tools
-#   eval_debate  glm + kimi + grok         adversarial council (tools empty)
-#     judge      anthropic/claude-sonnet-5 critical chair (critical)
-#   plan         gpt-5.6-terra             ExecutionPlan JSON (critical)
+#   prepare      z-ai/glm-5.1              OR        cheap-strong context pack
+#   directive×N  grok-4.5                  xai-oauth SuperGrok (NOT OpenRouter)
+#   dq           gpt-5.6-terra             OR        hard filters (critical)
+#   dd           moonshotai/kimi-k2.5      OR        long research + tools
+#   eval_debate  glm + kimi + grok         mixed     adversarial council (tools empty)
+#     risk       grok-4.5                  xai-oauth SuperGrok
+#     judge      anthropic/claude-sonnet-5 OR        critical chair (critical)
+#   plan         gpt-5.6-terra             OR        ExecutionPlan JSON (critical)
 #
-# All models go through provider: openrouter (Joe's Hermes default route).
-# Bare terra ids follow the CCR/OR host convention used elsewhere on this desk.
-# Upgrade further only after a real morning has produced usable plans.
+# Grok nodes MUST use provider: xai-oauth + bare model id `grok-4.5` so they
+# bill SuperGrok subscription (hermes auth add xai-oauth). OpenRouter `x-ai/...`
+# is a different route and should not be used for those nodes.
+# Other nodes use openrouter. Bare terra ids follow local OR convention.
 # ---------------------------------------------------------------------------
 # WHY THE GRAPH IS STILL MOSTLY A STRAIGHT LINE
 #
@@ -91,8 +93,8 @@ nodes:
     branch:
       kind: agent
       spec:
-        model: x-ai/grok-4.5
-        provider: openrouter
+        model: grok-4.5
+        provider: xai-oauth
         prompt:
           library: pm-directive-v1
           params:
@@ -106,7 +108,10 @@ nodes:
         max_turns: 14
         budget_usd: 1.40
 
-  # --- hard DQ (Terra) — critical, default kill; can verify cheaply --------
+  # --- hard DQ (Terra) — critical; open sources/markets before killing -----
+  # Browserbase is NOT a workflow-native tool — it's a pm-desk CLI flag on
+  # `source collect --live`. Hermes `browser_*` covers ordinary pages; PDFs
+  # and hard CDN blocks may still need Browserbase via terminal + --home.
   - id: dq
     kind: agent
     spec:
@@ -120,10 +125,14 @@ nodes:
         - x_search
         - read_file
         - terminal
-      max_turns: 12
-      budget_usd: 1.40
+        - browser_navigate
+        - browser_snapshot
+        - browser_click
+        - browser_scroll
+      max_turns: 16
+      budget_usd: 2.00
 
-  # --- deep research (Kimi) + real tools — the generator's open browser ---
+  # --- deep research (Kimi) — MUST verify markets + primary docs for real --
   # NOTE: spec.tools is a toolset subset grant, not a true ACL; sibling tools
   # in the same toolset may appear. No trading/signing tools exist in-package.
   - id: dd
@@ -136,7 +145,9 @@ nodes:
       tools:
         - web_search
         - web_extract
+        - x_search
         - read_file
+        - terminal
         - browser_navigate
         - browser_snapshot
         - browser_click
@@ -242,8 +253,8 @@ nodes:
       - id: risk
         kind: agent
         spec:
-          model: x-ai/grok-4.5
-          provider: openrouter
+          model: grok-4.5
+          provider: xai-oauth
           max_turns: 8
           budget_usd: 0.70
           tools: []
