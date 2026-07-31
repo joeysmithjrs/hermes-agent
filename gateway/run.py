@@ -5885,6 +5885,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # dormant before the drained backlog has a chance to update the clock.
         self._scale_to_zero_cooldown_until: float = 0.0
 
+        # Code-skew self-heal: set once the background watcher has requested a
+        # restart, so a slow drain can't cause a second overlapping request on
+        # the next poll tick (request_restart() already no-ops on a second
+        # call, but this keeps the watcher's own log noise down too).
+        self._code_skew_restart_requested: bool = False
+
 
     def _wire_teams_pipeline_runtime(self) -> None:
         """Bind the Teams meeting pipeline runtime to Graph webhook ingress.
@@ -7121,6 +7127,88 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         except Exception:  # noqa: BLE001
             pass
         return max_restarts, window_seconds
+
+    def _code_skew_watch_config(self) -> tuple[bool, float]:
+        """Return ``(enabled, interval_seconds)`` for the proactive code-skew
+        watcher, read from ``gateway.code_skew_watch`` in config.yaml.
+
+        Defaults to enabled with a 5-minute poll — the whole point of this
+        watcher is to catch the drift a `git pull` (manual, or the window
+        before `hermes update`'s own restart lands) leaves behind BEFORE a
+        user hits the reactive `/model` guard, so it needs to be on by
+        default to close the gap described in the incident this closes.
+        Still configurable off (``enabled: false``) for operators who'd
+        rather rely purely on the reactive guard + manual restarts.
+        """
+        enabled = True
+        interval_seconds = 300.0
+        try:
+            user_cfg = _load_gateway_config()
+            gw = user_cfg.get("gateway") if isinstance(user_cfg, dict) else None
+            watch = gw.get("code_skew_watch") if isinstance(gw, dict) else None
+            if isinstance(watch, dict):
+                if "enabled" in watch:
+                    enabled = bool(watch["enabled"])
+                minutes = watch.get("interval_minutes")
+                if isinstance(minutes, (int, float)) and minutes > 0:
+                    interval_seconds = max(60.0, float(minutes) * 60.0)
+        except Exception:  # noqa: BLE001
+            pass
+        return enabled, interval_seconds
+
+    async def _code_skew_watcher(self, interval: float = 300.0) -> None:
+        """Proactively self-heal a stale-checkout gateway instead of waiting
+        for a user to hit the reactive `/model` guard (gateway/slash_commands.
+        py::_model_switch_skew_guard).
+
+        Root problem (see gateway/code_skew.py): a long-lived gateway process
+        keeps ``sys.modules`` frozen at boot. If the checkout changes
+        underneath it — a manual ``git pull``, or the window before `hermes
+        update`'s own restart takes effect — the process silently drifts from
+        disk. Until now the ONLY defense was reactive: refuse a `/model`
+        switch and tell the user to restart by hand. That leaves every other
+        code path (a fresh session, a newly-imported module on any other
+        first-time lazy import) still exposed, for as long as the operator
+        doesn't notice.
+
+        This watcher polls ``detect_code_skew()`` on an interval and, the
+        first time it sees drift, logs a CRITICAL line with the exact revs +
+        recovery commands and then requests a clean, graceful restart via the
+        existing ``request_restart(via_service=True)`` path (drains active
+        turns, exits with the service-restart code so systemd/launchd/s6
+        revive it — the same mechanism the SIGTERM handler and `hermes
+        gateway restart` already use). The freshly-spawned process boots a
+        new fingerprint that matches disk, so the drift can't recur from the
+        same cause. ``request_restart`` itself no-ops on a second call
+        (``_restart_task_started``), so this is safe to poll repeatedly even
+        during a slow drain.
+        """
+        from gateway.code_skew import detect_code_skew, skew_help_message
+
+        await asyncio.sleep(min(interval, 60.0))  # let startup settle
+        while self._running:
+            try:
+                await asyncio.sleep(interval)
+                if not self._running or self._code_skew_restart_requested:
+                    continue
+                skew = detect_code_skew()
+                if not skew:
+                    continue
+                boot_rev, disk_rev = skew
+                self._code_skew_restart_requested = True
+                logger.critical(
+                    "Code skew detected — this gateway booted on %s but the "
+                    "checkout on disk is now %s. Self-healing with a graceful "
+                    "restart to load the new code.\n%s",
+                    boot_rev,
+                    disk_rev,
+                    skew_help_message(boot_rev, disk_rev),
+                )
+                self.request_restart(via_service=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - the watcher must never crash the gateway
+                logger.debug("code-skew watcher tick failed", exc_info=True)
 
     def _scale_to_zero_should_arm(self) -> bool:
         """Whether to start the idle watcher (D1/D11/§3.4(1))."""
@@ -10310,7 +10398,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             pass
         try:
             from gateway.status import write_runtime_status
-            write_runtime_status(gateway_state="starting", exit_reason=None)
+            from gateway.code_skew import boot_fingerprint_short
+            write_runtime_status(
+                gateway_state="starting",
+                exit_reason=None,
+                code_boot_rev=boot_fingerprint_short(),
+            )
         except Exception:
             pass
         try:
@@ -11042,6 +11135,20 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # result back into its originating session as a new turn, covering the
         # idle case where the subagent finishes with no agent turn running.
         self._spawn_supervised(self._async_delegation_watcher, "async_delegation_watcher")
+
+        # Start the proactive code-skew watcher — self-heals a stale-checkout
+        # gateway (see gateway/code_skew.py + _code_skew_watcher docstring)
+        # instead of relying solely on the reactive `/model` guard. On by
+        # default; opt out via `gateway.code_skew_watch.enabled: false`.
+        try:
+            _skew_watch_enabled, _skew_watch_interval = self._code_skew_watch_config()
+            if _skew_watch_enabled:
+                self._spawn_supervised(
+                    lambda: self._code_skew_watcher(interval=_skew_watch_interval),
+                    "code_skew_watcher",
+                )
+        except Exception:  # noqa: BLE001 - arming must never block startup
+            logger.debug("code-skew watcher arm check failed at startup", exc_info=True)
 
         # Start the scale-to-zero idle watcher ONLY when this instance is opted
         # in (the NAS "Labs" HERMES_SCALE_TO_ZERO stamp), messaging is

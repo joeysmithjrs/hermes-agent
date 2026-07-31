@@ -277,6 +277,32 @@ class TestGatewayRuntimeStatus:
         assert payload["platforms"]["discord"]["error_message"] is None
 
 
+class TestCodeBootRev:
+    """code_boot_rev lets an out-of-process reader (hermes doctor, hermes
+    update's post-restart verification, hermes gateway status) learn what
+    revision a running gateway booted on without querying the live process —
+    see gateway/code_skew.py.
+    """
+
+    def test_code_boot_rev_persisted_and_read_back(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+        status.write_runtime_status(gateway_state="starting", code_boot_rev="abc1234567")
+
+        payload = status.read_runtime_status()
+        assert payload["code_boot_rev"] == "abc1234567"
+
+    def test_code_boot_rev_absent_when_not_provided(self, tmp_path, monkeypatch):
+        """A caller that never passes code_boot_rev shouldn't see the key
+        materialize with some default — absence means 'unknown', not ''."""
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+        status.write_runtime_status(gateway_state="running")
+
+        payload = status.read_runtime_status()
+        assert "code_boot_rev" not in payload
+
+
 class TestGetProcessStartTime:
     """Start-time fingerprint backing the PID-reuse guard (#43846 / #50468).
 

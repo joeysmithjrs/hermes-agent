@@ -5461,6 +5461,29 @@ def _runtime_health_lines() -> list[str]:
     elif gateway_state == "stopped" and exit_reason:
         lines.append(f"⚠ Last shutdown reason: {exit_reason}")
 
+    # Code skew (see gateway/code_skew.py): a long-lived gateway's boot
+    # revision can silently drift from the checkout on disk after a `git
+    # pull` (manual, or the window before `hermes update`'s own restart
+    # lands). Surface it here too — not just reactively on `/model` — so
+    # `hermes gateway status` catches it without a user hitting the guard
+    # first. Only meaningful while the recorded process is actually live;
+    # a dead/stale record's rev doesn't describe anything currently running.
+    boot_rev = state.get("code_boot_rev")
+    if boot_rev and runtime_status_pid_is_live(state):
+        try:
+            from gateway.code_skew import current_disk_rev_short
+
+            disk_rev = current_disk_rev_short()
+        except Exception:
+            disk_rev = None
+        if disk_rev and disk_rev != boot_rev:
+            lines.append(
+                f"⚠ Running stale code: booted on {boot_rev}, checkout is now "
+                f"{disk_rev} — restart with: hermes gateway restart"
+            )
+        elif disk_rev:
+            lines.append(f"✓ Running fresh code (booted on {boot_rev})")
+
     return lines
 
 

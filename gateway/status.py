@@ -985,6 +985,7 @@ def write_runtime_status(
     error_code: Any = _UNSET,
     error_message: Any = _UNSET,
     served_profiles: Any = _UNSET,
+    code_boot_rev: Any = _UNSET,
 ) -> None:
     """Persist gateway runtime health information for diagnostics/status."""
     path = _get_runtime_status_path()
@@ -1011,6 +1012,15 @@ def write_runtime_status(
         # for a single-profile gateway. Lets `hermes status` show per-profile
         # coverage without a second probe.
         payload["served_profiles"] = list(served_profiles or [])
+    if code_boot_rev is not _UNSET:
+        # The short git rev this gateway process recorded at boot (see
+        # gateway/code_skew.py). Lets an out-of-process reader (`hermes
+        # doctor`, `hermes update`'s post-restart verification, `hermes
+        # gateway status`) learn what code a running gateway is actually
+        # serving without querying the live process directly — closes the
+        # "code skew" visibility gap where a long-lived gateway silently
+        # drifts from the checkout on disk after a `git pull`.
+        payload["code_boot_rev"] = code_boot_rev
 
     if platform is not _UNSET:
         platform_payload = payload["platforms"].get(platform, {})

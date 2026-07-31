@@ -45,6 +45,40 @@ class TestShort:
         assert code_skew._short("git:HEAD:abc1234") == "abc1234"
 
 
+class TestBootFingerprintShort:
+    def test_none_before_boot_recorded(self):
+        assert code_skew.boot_fingerprint_short() is None
+
+    def test_returns_short_form_after_boot_recorded(self, monkeypatch):
+        monkeypatch.setattr(code_skew, "_fingerprint", lambda: "git:refs/heads/main:abc1234567890")
+        code_skew.record_boot_fingerprint()
+        assert code_skew.boot_fingerprint_short() == "abc1234567"
+
+
+class TestCurrentDiskRevShort:
+    def test_none_when_fingerprint_unreadable(self, monkeypatch):
+        monkeypatch.setattr(
+            "hermes_cli.main._read_git_revision_fingerprint", lambda root: None
+        )
+        assert code_skew.current_disk_rev_short() is None
+
+    def test_shortens_current_fingerprint(self, monkeypatch):
+        monkeypatch.setattr(
+            "hermes_cli.main._read_git_revision_fingerprint",
+            lambda root: "git:refs/heads/main:def4567890123",
+        )
+        assert code_skew.current_disk_rev_short() == "def4567890"
+
+
+class TestSkewHelpMessage:
+    def test_names_both_revs_and_recovery_commands(self):
+        msg = code_skew.skew_help_message("abc1234567", "def4567890")
+        assert "abc1234567" in msg
+        assert "def4567890" in msg
+        assert "hermes gateway restart" in msg
+        assert "git log abc1234567..def4567890" in msg
+
+
 class TestModelSwitchSkewGuard:
     def test_guard_returns_none_without_skew(self, monkeypatch):
         from gateway import slash_commands

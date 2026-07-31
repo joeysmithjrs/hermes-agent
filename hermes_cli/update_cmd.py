@@ -4353,6 +4353,12 @@ def _cmd_update_impl(args, gateway_mode: bool):
             killed_pids = set()
             relaunched_profiles = []
             externally_supervised_profiles = []
+            # profile name -> HERMES_HOME, captured for the post-restart
+            # fresh-fingerprint verification below (manual profiles only —
+            # we already have the path from find_profile_gateway_processes()
+            # for free; systemd/launchd units are verified against the
+            # CURRENT process's own HERMES_HOME instead, see below).
+            relaunched_profile_homes: dict = {}
 
             # --- Systemd services (Linux) ---
             # Discover all hermes-gateway* units (default + profiles)
@@ -4742,6 +4748,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     externally_supervised_profiles.append(proc.profile)
                 else:
                     relaunched_profiles.append(proc.profile)
+                    relaunched_profile_homes[proc.profile] = proc.path
 
             for pid in manual_pids:
                 if pid in profile_processes:
@@ -4833,6 +4840,105 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     _time.sleep(1.5)
             except Exception as _sweep_exc:
                 logger.debug("Post-restart survivor sweep failed: %s", _sweep_exc)
+
+            # --- Post-restart fresh-fingerprint verification --------------
+            # Anti-skew close-out (see gateway/code_skew.py). Everything
+            # above only proves a restart command was ISSUED and (for
+            # systemd) that the unit came back ``active`` — none of that
+            # proves the resulting process actually booted the code we just
+            # pulled. A restart racing a slow drain, a privilege hiccup that
+            # silently no-ops the restart command, or a supervisor that
+            # respawns from a stale cached path can all leave a "successfully
+            # restarted" gateway serving OLD code — which is exactly how a
+            # user ends up hitting the reactive `/model` skew guard days
+            # later with no idea why. Confirm each gateway we can positively
+            # identify (this profile's own HERMES_HOME, plus every manual
+            # profile we relaunched above) actually reports the freshly
+            # pulled revision before declaring the update done.
+            try:
+                from gateway.code_skew import current_disk_rev_short
+                from gateway.status import read_runtime_status, runtime_status_pid_is_live
+
+                expected_rev = current_disk_rev_short(_m().PROJECT_ROOT)
+                skew_check_failed = []
+                _current_profile_had_live_gateway = False
+
+                if expected_rev:
+                    # This profile's own gateway. Scoped to "is anything
+                    # live for THIS HERMES_HOME right now" rather than
+                    # cross-referencing restarted_services/killed_pids —
+                    # those are fleet-wide (every hermes-gateway* unit on the
+                    # box), and a systemd/launchd unit name doesn't reliably
+                    # map back to a profile. A live gateway for the CURRENT
+                    # profile is unambiguous, and "any live gateway should be
+                    # on fresh code right after `hermes update`" holds
+                    # regardless of which restart path (if any) touched it.
+                    _current_home = get_hermes_home()
+                    _current_record = read_runtime_status()
+                    _current_profile_had_live_gateway = bool(
+                        _current_record and runtime_status_pid_is_live(_current_record)
+                    )
+                    if _current_profile_had_live_gateway:
+                        _matched, _last_seen = _poll_gateway_code_boot_rev(
+                            _current_home, expected_rev
+                        )
+                        if not _matched:
+                            # One retry — the restart may simply still be
+                            # in flight (slow drain). Best-effort blunt
+                            # restart of this profile's service, then
+                            # re-poll once before giving up.
+                            try:
+                                from hermes_cli.gateway import get_service_name
+                                _svc = get_service_name()
+                                for _retry_scope_cmd in (["systemctl", "--user"], ["systemctl"]):
+                                    subprocess.run(
+                                        _retry_scope_cmd + ["restart", _svc],
+                                        capture_output=True,
+                                        timeout=10,
+                                    )
+                            except Exception:
+                                pass
+                            _matched, _last_seen = _poll_gateway_code_boot_rev(
+                                _current_home, expected_rev, timeout=15.0
+                            )
+                        if not _matched:
+                            skew_check_failed.append(
+                                f"current gateway (booted {_last_seen or 'unknown'}, "
+                                f"expected {expected_rev})"
+                            )
+
+                    # Manual profiles we relaunched above — HERMES_HOME is
+                    # already known precisely (no name-mapping ambiguity).
+                    for _profile, _home in relaunched_profile_homes.items():
+                        _matched, _last_seen = _poll_gateway_code_boot_rev(_home, expected_rev)
+                        if not _matched:
+                            skew_check_failed.append(
+                                f"profile '{_profile}' (booted {_last_seen or 'unknown'}, "
+                                f"expected {expected_rev})"
+                            )
+
+                if skew_check_failed:
+                    gateway_fleet_restart_incomplete = True
+                    print()
+                    print("  ⚠ Update incomplete — restarted, but still running stale code:")
+                    for _label in skew_check_failed:
+                        print(f"      • {_label}")
+                    print(
+                        f"    Expected revision: {expected_rev}. Restart manually and "
+                        "verify: hermes gateway restart && hermes doctor"
+                    )
+                    if gateway_mode:
+                        _exit_code_path = get_hermes_home() / ".update_exit_code"
+                        try:
+                            _exit_code_path.write_text("1", encoding="utf-8")
+                        except OSError:
+                            pass
+                elif expected_rev and (
+                    _current_profile_had_live_gateway or relaunched_profile_homes
+                ):
+                    print(f"  ✓ Verified fresh code (boot rev matches disk: {expected_rev})")
+            except Exception as _verify_exc:
+                logger.debug("Post-restart fingerprint verification failed: %s", _verify_exc)
 
         except Exception as e:
             logger.debug("Gateway restart during update failed: %s", e)
@@ -4997,3 +5103,45 @@ def _service_restart_sec(
                     pass
                 break
     return total if matched else default
+
+
+def _poll_gateway_code_boot_rev(
+    hermes_home: Path,
+    expected_rev: str,
+    *,
+    timeout: float = 20.0,
+    poll_interval: float = 1.0,
+) -> tuple:
+    """Poll a gateway's persisted runtime status until its recorded boot
+    revision (``code_boot_rev``, see ``gateway/status.py::write_runtime_
+    status``) matches ``expected_rev``, or ``timeout`` elapses.
+
+    This is the anti-skew close-out for the update path: ``systemctl
+    is-active`` (or a bare process-exists check) only proves a gateway
+    process is UP, not which revision it booted on. A restart that races a
+    slow drain, a privilege hiccup that silently no-ops the restart command,
+    or a supervisor that respawns the OLD binary from a cached path can all
+    report "restarted successfully" while still serving stale code. Reading
+    the fresh process's own self-reported boot fingerprint is the only way
+    to actually confirm the thing we just restarted is running the code we
+    just pulled.
+
+    Returns ``(matched, last_seen_rev)``. ``last_seen_rev`` is ``None`` when
+    no runtime status file was found at all (never written, or the gateway
+    hasn't reached that point in startup yet) — distinct from "present but
+    still showing the old rev" — so callers can give a more specific error.
+    """
+    from gateway.status import read_runtime_status
+
+    status_path = hermes_home / "gateway_state.json"
+    deadline = _time.monotonic() + max(timeout, poll_interval)
+    last_seen = None
+    while True:
+        record = read_runtime_status(path=status_path)
+        if isinstance(record, dict):
+            last_seen = record.get("code_boot_rev")
+            if last_seen == expected_rev:
+                return True, last_seen
+        if _time.monotonic() >= deadline:
+            return False, last_seen
+        _time.sleep(poll_interval)
