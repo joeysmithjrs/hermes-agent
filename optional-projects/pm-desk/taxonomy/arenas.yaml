@@ -1,0 +1,173 @@
+# PM Desk market arenas — versioned.
+#
+# An arena is a *sector of Polymarket*, not a strategy. It exists so the morning
+# generator can run ONE mission (say fair-value research) across SEVERAL
+# unrelated corners of the venue in parallel, instead of four unrelated missions
+# that share nothing and cannot be compared at the gate.
+#
+# Each arena carries machine filters, not vibes: an agent is expected to reach
+# the arena with `pm-desk market discover` plus these filters rather than
+# free-associating from the title. `min_liquidity_usd` is soft guidance for the
+# agent's own screening, not a hard compiler check — books move.
+#
+# `bans` are the things this desk has decided are not worth a morning inside
+# that arena, usually because they are mega-liquidity index beta where a
+# read-only paper desk has no informational claim at all.
+#
+# Bump `version` whenever arena semantics or filters change, so a recorded seed
+# can be interpreted against the arena set that produced it.
+
+version: 1
+
+arenas:
+  # ---------------------------------------------------------------------------
+  - id: pop_culture
+    title: Pop culture, awards and entertainment
+    description: >
+      Awards, box office, streaming charts, celebrity and music-industry
+      questions. Resolution usually keys on one named publisher (an academy, a
+      chart, a studio release) and the crowd is closer to fandom than to
+      professional pricing, so careful base rates and rules reading pay.
+    gamma_tag_any: [pop-culture, entertainment, movies, music, awards, tv, celebrities]
+    slug_includes: [oscar, grammy, emmy, box-office, billboard, netflix, spotify, album, movie, film, rotten]
+    slug_excludes: [election, cpi, fed, bitcoin, ethereum]
+    min_liquidity_usd: 3000
+    examples:
+      - Best Picture winner at the next Academy Awards
+      - Opening-weekend box office bracket for a named release
+      - Billboard Hot 100 number one on a named date
+    bans:
+      - Anything resolving on a private social-media account the desk cannot observe
+
+  # ---------------------------------------------------------------------------
+  - id: politics
+    title: Elections, legislatures and political outcomes
+    description: >
+      Elections, confirmations, cabinet changes, legislative passage, party
+      leadership. Official authorities publish the deciding fact, and
+      provisional-versus-certified is the classic rules trap. Deep and crowded
+      at the top of the book, much thinner two or three questions down.
+    gamma_tag_any: [politics, elections, us-politics, world-politics, geopolitics]
+    slug_includes: [election, senate, house, governor, president, primary, parliament, confirm, cabinet, impeach]
+    slug_excludes: [bitcoin, ethereum, cpi-]
+    min_liquidity_usd: 5000
+    examples:
+      - Named-state race called for a party by a named authority
+      - Whether a nominee is confirmed before a stated date
+      - Whether a named bill passes a chamber this session
+    bans:
+      - The single mega-liquidity headline presidential market (index beta, no desk edge)
+
+  # ---------------------------------------------------------------------------
+  - id: tech
+    title: Technology, AI models and company milestones
+    description: >
+      Model releases, benchmark thresholds, product launches, corporate
+      milestones and outages. The resolution source is often a company blog,
+      leaderboard or changelog — highly fingerprintable, and frequently
+      mispriced because the crowd trades the narrative rather than the rules.
+    gamma_tag_any: [tech, ai, technology, science, space]
+    slug_includes: [openai, anthropic, google, gpt, gemini, llama, model, launch, spacex, starship, apple, nvidia, chip]
+    slug_excludes: [election, cpi-]
+    min_liquidity_usd: 3000
+    examples:
+      - Whether a named lab ships a named model before a date
+      - Whether a public leaderboard shows a score above a threshold
+      - Whether a named launch attempt succeeds in a window
+    bans:
+      - Questions whose resolution depends on an unnamed "credible reports" standard
+
+  # ---------------------------------------------------------------------------
+  - id: sports
+    title: Sports outcomes, seasons and player milestones
+    description: >
+      Games, series, season awards, transfers and statistical milestones.
+      Liquid, fast, and largely efficient in-play — so the desk's seam here is
+      season-long structure, rules edge cases and stale related contracts, not
+      racing a live scoreboard.
+    gamma_tag_any: [sports, nfl, nba, mlb, soccer, epl, tennis, ufc, f1]
+    slug_includes: [nfl, nba, mlb, nhl, epl, champions-league, super-bowl, world-cup, mvp, playoffs, transfer]
+    slug_excludes: [election, cpi-]
+    min_liquidity_usd: 5000
+    examples:
+      - Season-award winner for a named league
+      - Whether a named club finishes above a stated table position
+      - A player statistical milestone before season end
+    bans:
+      - Sub-minute in-play racing; the desk has no latency claim there
+
+  # ---------------------------------------------------------------------------
+  - id: crypto
+    title: Crypto prices, protocol events and industry milestones
+    description: >
+      Price brackets, ETF and listing decisions, upgrade timelines, protocol
+      governance. Price brackets are efficient and options-informed; the seam
+      is in the discrete, rules-heavy questions (approvals, listings, hard-fork
+      dates) where a primary document decides the outcome.
+    gamma_tag_any: [crypto, bitcoin, ethereum, defi, solana]
+    slug_includes: [bitcoin, btc, ethereum, eth, solana, etf, listing, upgrade, fork, stablecoin, coinbase]
+    slug_excludes: [election]
+    min_liquidity_usd: 5000
+    examples:
+      - Whether a named ETF decision lands before a stated deadline
+      - Whether a named upgrade activates in a quarter
+      - Whether a named asset is listed on a named venue
+    bans:
+      - Short-horizon BTC/ETH price brackets (efficient, options-informed, no desk edge)
+
+  # ---------------------------------------------------------------------------
+  - id: macro_sched
+    title: Scheduled macro statistics and central banks
+    description: >
+      CPI, employment, GDP, policy decisions and other calendar-dated prints
+      whose exact published figure is the resolution criterion. The publisher,
+      the vintage and the release minute are all knowable in advance, which is
+      why this arena rewards preparation and punishes improvisation.
+    gamma_tag_any: [economics, macro, fed, inflation, economy]
+    slug_includes: [cpi, pce, fed, fomc, rate, gdp, unemployment, payroll, jobs, inflation, recession]
+    slug_excludes: [bitcoin, ethereum]
+    # Matched case-insensitively (JavaScript regex; no inline (?i) flag).
+    question_regex: '(cpi|pce|gdp|fed|fomc|rate|payroll|unemploy|inflation|recession)'
+    min_liquidity_usd: 10000
+    examples:
+      - Month-over-month CPI bracket for a named release
+      - Whether the policy rate is cut at a named meeting
+      - Whether a named revision moves a prior print past a threshold
+    bans:
+      - Treating a consensus forecast as if it were the resolution source
+
+  # ---------------------------------------------------------------------------
+  - id: geo
+    title: Geopolitics, conflict and international agreements
+    description: >
+      Ceasefires, treaties, sanctions, leadership changes and territorial
+      questions. Resolution language is the whole game here: "agreement",
+      "control" and "recognised" are all contested terms, and the desk's edge is
+      usually clarity about what the rules actually require.
+    gamma_tag_any: [geopolitics, world, war, conflict, middle-east, ukraine, china]
+    slug_includes: [ceasefire, treaty, sanction, nato, un-, summit, invasion, peace-deal, border]
+    slug_excludes: [nfl, nba, bitcoin]
+    min_liquidity_usd: 5000
+    examples:
+      - Whether a named agreement is signed before a date
+      - Whether a named body adopts a named resolution
+      - Whether a named leader remains in office through a window
+    bans:
+      - Questions resolving on casualty counts no public authority publishes cleanly
+
+  # ---------------------------------------------------------------------------
+  - id: other_midcap
+    title: Uncategorised mid-cap questions
+    description: >
+      The residual arena: weather and climate records, health and disease
+      milestones, corporate and legal outcomes, and anything else with a real
+      book that does not fit a named sector above. Deliberately broad, because
+      the seams the desk has not named yet mostly live here.
+    slug_excludes: [election, nfl, nba, bitcoin-price, cpi-]
+    min_liquidity_usd: 3000
+    examples:
+      - Whether a named regulator approves a named drug in a window
+      - Whether a named court issues a ruling before a date
+      - A record temperature or named-storm question with an official source
+    bans:
+      - Joke or meme markets with no observable resolution source
