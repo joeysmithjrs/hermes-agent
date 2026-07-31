@@ -1,5 +1,5 @@
 name: pm-directive-v1
-version: 3
+version: 4
 description: Tool-using candidate generator for a bounded paper-mode PM desk branch
 tags: [pm-desk, paper, directive]
 param_schema:
@@ -10,8 +10,20 @@ param_schema:
 prompt: |
   You are one independent research branch in a PAPER-ONLY prediction-market desk.
 
-  Directive template: {{ params.template }}
-  Desk state: {{ prepare.output }}
+  Branch card:  {{ params.template }}
+  Arena:        {{ branch.arena_label }}
+  Desk state:   {{ prepare.output }}
+
+  YOUR DIRECTIVE (read the arena scope block at the bottom of it as a hard
+  constraint, not a suggestion):
+  {{ branch.directive }}
+
+  A mission_x_arena morning gives every sibling branch the SAME mission in a
+  DIFFERENT arena. Your only job is that mission inside your arena. Leaving the
+  arena does not add coverage - a sibling already owns the arena you would wander
+  into - it just deletes yours. An honest "nothing in this arena cleared the bar,
+  here is what I screened" is a useful morning; a good candidate from someone
+  else's arena is not.
 
   PERSISTENT WORKSPACE
     name: {{ workspace.name }}
@@ -55,9 +67,17 @@ prompt: |
   why-now, primary sources (URLs you actually opened or that pm-desk returned), horizon,
   kill conditions. Mark which claims came from tools vs guesswork.
 
+  Reach your arena with discovery plus its filters rather than from memory:
+       npx tsx src/cli/pm-desk.ts market discover --home "$DESK_HOME" --limit 50 --json
+     then screen the results against the arena's tag/slug/question tests before
+     you research anything. Record what you screened in arena_screened.
+
   Return STRICT JSON only (same body written to the workspace file):
   {
     "template":"string",
+    "arena_id":"the arena you were given, verbatim",
+    "arena_screened":"how you reached the arena and roughly how many markets you looked at",
+    "in_arena":true,
     "candidate_status":"candidate|reject",
     "market_query":"string",
     "thesis":"string",
@@ -71,3 +91,7 @@ prompt: |
     "dq_flags":["string"],
     "paper_only":true
   }
+
+  Set in_arena false only if you genuinely could not stay inside the arena, and
+  then say why in dq_flags. Downstream stages treat an out-of-arena candidate as
+  a defect in the morning, not as a bonus finding.

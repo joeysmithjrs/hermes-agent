@@ -170,6 +170,11 @@ export interface SeededCard {
   human_only: string[];
   paper_only: true;
   /**
+   * Always present, in both modes, because a prompt that references a field
+   * some cards lack fails that branch outright rather than degrading.
+   */
+  arena_label: string;
+  /**
    * mission_x_arena only. `card_id` is `<mission_card_id>__<arena_id>` so a
    * branch, its workspace artifact and its fanout key stay distinguishable,
    * while these fields let a prompt or tool address either half directly.
@@ -250,6 +255,9 @@ function weightedOrder<T extends { weight: number }>(items: readonly T[], rng: (
   return ordered;
 }
 
+/** What an unbound card reports, so every card answers the same question. */
+const NO_ARENA_LABEL = 'none (this card is not bound to an arena)';
+
 interface EligibilityPass {
   /** family id -> its eligible cards, already weight-ordered for this seed. */
   eligibleByFamily: Map<string, SeededCard[]>;
@@ -317,6 +325,7 @@ function eligibilityPass(
         prohibits: [...new Set(['live_execution', ...card.prohibits])],
         human_only: family.human_only,
         paper_only: true,
+        arena_label: NO_ARENA_LABEL,
         weight: card.weight ?? 1,
       });
     }
@@ -478,6 +487,7 @@ function selectMissionXArena(
     card_id: `${missionCard.card_id}__${arena.id}`,
     title: `${missionCard.title} — ${arena.title}`,
     directive: `${missionCard.directive}\n\n${arenaScopeBlock(arena)}`,
+    arena_label: `${arena.id} — ${arena.title}`,
     mission_family_id: missionFamilyId,
     mission_card_id: missionCard.card_id,
     arena_id: arena.id,

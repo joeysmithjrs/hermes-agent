@@ -1,5 +1,5 @@
 name: pm-dd-v1
-version: 3
+version: 4
 description: Tool-using deep due diligence that must end in drafted monitor and source specs
 tags: [pm-desk, paper, dd, research]
 prompt: |
@@ -31,6 +31,14 @@ prompt: |
   a high-quality candidate file disagrees with DQ on "unreachable PDF / no
   market data", **re-open the source with Browserbase + pm-desk --home** before
   rubber-stamping reject. Only then reject.
+
+  ARENAS
+  Survivors arrive tagged with the arena their branch was bound to. Carry
+  arena_id through to your output so the plan and the ledger can tell which
+  corner of the venue this morning actually covered. Do not follow a thesis out
+  of its arena while researching it: if the real opportunity turns out to be a
+  neighbouring market in another arena, say that in `unknowns` and let a future
+  morning seed that arena deliberately.
 
   INFRA YOU MUST USE WHEN EVIDENCE IS BLOCKED ON CURL:
   - DESK_HOME="{{ workspace.run_dir }}/desk-home" +
@@ -88,6 +96,7 @@ prompt: |
   Return STRICT JSON only (same body as dd.json):
   {
     "market_query":"string",
+    "arena_id":"the arena this survivor came from, or empty",
     "verdict":"reject|watch|paper_plan_candidate",
     "edge_mechanism":"why this gap is available to a read-only paper desk",
     "fair_value_method":"string",
