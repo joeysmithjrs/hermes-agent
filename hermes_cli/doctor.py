@@ -585,6 +585,58 @@ def _check_gateway_service_linger(issues: list[str]) -> None:
 _APIKEY_PROVIDERS_CACHE: list | None = None
 
 
+def _check_gateway_code_skew(issues: list[str]) -> None:
+    """Warn loudly when a running gateway is serving stale code.
+
+    Companion to ``gateway/code_skew.py``'s in-process guard: that guard only
+    fires reactively, inside the gateway process itself, when a user
+    attempts a `/model` switch. This check gives the SAME signal visibility
+    from the CLI side — so `hermes doctor` (run manually, or as the
+    "Recommended Post-Update Validation" step in updating.md) catches a
+    stale gateway even if nobody has hit the reactive guard yet.
+
+    Compares the gateway's self-reported boot revision (``code_boot_rev``,
+    persisted by ``gateway/status.py::write_runtime_status`` at startup)
+    against the checkout's CURRENT revision. Skips silently (no false
+    positive) when no gateway is running, the checkout isn't a git install,
+    or the gateway predates this field (older code_boot_rev never written).
+    """
+    try:
+        from gateway.status import read_runtime_status, runtime_status_pid_is_live
+        from gateway.code_skew import current_disk_rev_short
+    except Exception as e:
+        check_warn("Gateway code freshness", f"(could not import gateway helpers: {e})")
+        return
+
+    record = read_runtime_status()
+    if not record or not runtime_status_pid_is_live(record):
+        return  # no gateway running for this profile — nothing to check
+
+    boot_rev = record.get("code_boot_rev")
+    if not boot_rev:
+        return  # older gateway process, or non-git install — no signal
+
+    disk_rev = current_disk_rev_short(PROJECT_ROOT)
+    if not disk_rev:
+        return
+
+    _section("Gateway Code Freshness")
+    if boot_rev == disk_rev:
+        check_ok("Gateway running fresh code", f"(booted on {boot_rev})")
+        return
+
+    check_warn(
+        "Gateway running stale code",
+        f"(booted on {boot_rev}, checkout is now {disk_rev})",
+    )
+    check_info(f"See what changed:  git log {boot_rev}..{disk_rev} --oneline")
+    check_info("Restart to load the new code:  hermes gateway restart")
+    issues.append(
+        f"Gateway booted on {boot_rev} but disk is now {disk_rev} — "
+        "restart it: hermes gateway restart"
+    )
+
+
 def _build_apikey_providers_list() -> list:
     """Build the API-key provider health-check list once and cache it.
 
@@ -1617,6 +1669,7 @@ def run_doctor(args):
 
     _check_gateway_service_linger(issues)
     _check_s6_supervision(issues)
+    _check_gateway_code_skew(issues)
 
     if sys.platform != "win32":
         _section("Command Installation")
@@ -2766,5 +2819,14 @@ def run_doctor(args):
     else:
         print(color("─" * 60, Colors.GREEN))
         print(color("  All checks passed! 🎉", Colors.GREEN, Colors.BOLD))
-    
+
     print()
+
+    # --strict: fail the process (not just print) when issues remain, so a
+    # deploy/CI gate (e.g. scripts/server/deploy.sh.example's post-update
+    # health probe) can actually block on `hermes doctor`'s findings instead
+    # of always seeing a green exit code regardless of output. Off by
+    # default — interactive use and any existing script that shells out to
+    # `hermes doctor` for its printed report must keep working unchanged.
+    if getattr(args, "strict", False) and remaining_issues:
+        sys.exit(1)

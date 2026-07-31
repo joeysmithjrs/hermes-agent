@@ -23,6 +23,15 @@ def build_doctor_parser(subparsers, *, cmd_doctor: Callable) -> None:
         "--fix", action="store_true", help="Attempt to fix issues automatically"
     )
     doctor_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Exit with status 1 if any issue remains unresolved. Off by "
+            "default so interactive use never fails a script depending on "
+            "it; opt in for deploy/CI gates (e.g. a post-update health probe)."
+        ),
+    )
+    doctor_parser.add_argument(
         "--ack",
         metavar="ADVISORY_ID",
         default=None,
