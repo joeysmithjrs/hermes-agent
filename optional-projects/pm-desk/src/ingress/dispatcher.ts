@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { DispatchDisabledError, DispatchError } from '../core/errors.js';
+import { ADJUDICATION_WORKFLOW_FILE, packageWorkflowPath } from '../hermes/package-paths.js';
 import type { SignalEnvelope } from '../schema/signal.js';
 import type { DeskStore } from '../store/index.js';
 
@@ -59,6 +60,13 @@ export interface HermesLauncherOptions {
   runner?: CommandRunner;
   /** Directory for the audit copy of the JSON input handed to Hermes. */
   inputDir?: string;
+  /**
+   * Append `--dry-run`, so Hermes compiles the workflow and plans the ready set
+   * without spawning an agent. Costs nothing and calls no model — this is how
+   * an operator (and the opt-in integration test) proves the launcher's argv
+   * really is accepted by the installed CLI.
+   */
+  dryRun?: boolean;
 }
 
 /**
@@ -85,6 +93,7 @@ export class HermesLauncherDispatcher implements Dispatcher {
   private readonly maxBudgetUsd?: number;
   private readonly runner: CommandRunner;
   private readonly inputDir?: string;
+  private readonly dryRun: boolean;
 
   constructor(
     private readonly store: DeskStore,
@@ -92,11 +101,15 @@ export class HermesLauncherDispatcher implements Dispatcher {
   ) {
     this.enabled = options.enabled ?? false;
     this.binary = options.binary ?? 'hermes';
-    this.workflow = options.workflow ?? 'workflows/pm-signal-adjudication-v0.yaml';
+    // Absolute, not cwd-relative: `pm-desk ingress serve` is run from wherever
+    // the operator happens to be, and a relative default silently resolved
+    // against the process cwd would only ever work from the package root.
+    this.workflow = options.workflow ?? packageWorkflowPath(ADJUDICATION_WORKFLOW_FILE);
     this.mode = options.mode ?? 'path';
     this.maxBudgetUsd = options.maxBudgetUsd;
     this.runner = options.runner ?? defaultRunner;
     this.inputDir = options.inputDir;
+    this.dryRun = options.dryRun ?? false;
   }
 
   async dispatch(signal: SignalEnvelope): Promise<DispatchResult> {
@@ -135,6 +148,7 @@ export class HermesLauncherDispatcher implements Dispatcher {
       '--input',
       payload,
       ...(this.maxBudgetUsd !== undefined ? ['--max-budget-usd', String(this.maxBudgetUsd)] : []),
+      ...(this.dryRun ? ['--dry-run'] : []),
     ];
     const result = await this.runner(this.binary, args);
 
@@ -186,8 +200,9 @@ export function resolveDispatcher(
     return new HermesLauncherDispatcher(store, {
       enabled: env.PM_DESK_DISPATCH_HERMES === '1' || name === 'hermes',
       binary: env.PM_DESK_HERMES_BIN ?? 'hermes',
-      workflow: env.PM_DESK_HERMES_WORKFLOW ?? 'workflows/pm-signal-adjudication-v0.yaml',
+      workflow: env.PM_DESK_HERMES_WORKFLOW,
       mode: env.PM_DESK_HERMES_MODE === 'catalog' ? 'catalog' : 'path',
+      dryRun: env.PM_DESK_HERMES_DRY_RUN === '1',
     });
   }
   throw new DispatchError(`unknown dispatcher: ${requested}`, {

@@ -1,0 +1,33 @@
+name: pm-directive-v1
+version: 1
+description: Candidate generator for a bounded paper-mode PM desk branch
+tags: [pm-desk, paper, directive]
+param_schema:
+  type: object
+  required: [template]
+  properties:
+    template: {type: string}
+prompt: |
+  You are one independent research branch in a paper-only prediction-market desk.
+
+  Directive template: {{ params.template }}
+  Desk state: {{ prepare.output }}
+
+  Produce ONE candidate or explicitly reject. Never propose a live order, wallet action, UMA proposal, or any action outside the venue/geo/KYC perimeter. Do not use leaderboard-wallet copying as evidence of edge.
+
+  A viable candidate must name: precise market/question (or discovery query if not yet identified), edge mechanism, why it could exist now, primary sources needed, horizon, and kill conditions. If any of these are missing, return candidate_status="reject".
+
+  Return STRICT JSON only:
+  {
+    "template":"string",
+    "candidate_status":"candidate|reject",
+    "market_query":"string",
+    "thesis":"string",
+    "why_me":"string",
+    "edge_mechanism":"string",
+    "primary_sources":["URL or source description"],
+    "horizon":"string",
+    "kill_conditions":["string"],
+    "dq_flags":["string"],
+    "paper_only":true
+  }

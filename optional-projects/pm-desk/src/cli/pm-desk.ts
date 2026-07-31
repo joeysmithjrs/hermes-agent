@@ -50,6 +50,10 @@ WORKFLOW
   workflow render --signal <id>   Render the adjudication prompt (no LLM call)
   workflow adjudicate --signal <id> --result <file>   Record a result
 
+HERMES (optional binding; dry-run by default, never edits Hermes config)
+  hermes workflows                Print the shipped workflows and their paths
+  hermes install-prompts          Plan the prompt-library install (--apply to write)
+
 GLOBAL FLAGS
   --home <dir>   Desk home (default $PM_DESK_HOME or ./data)
   --json         Machine-readable output
@@ -76,6 +80,8 @@ async function loadHandler(command: string): Promise<Handler | undefined> {
       return (await import('./commands/taxonomy.js')).taxonomyCommand;
     case 'workflow':
       return (await import('./commands/workflow.js')).workflowCommand;
+    case 'hermes':
+      return (await import('./commands/hermes.js')).hermesCommand;
     default:
       return undefined;
   }
