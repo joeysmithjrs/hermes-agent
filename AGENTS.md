@@ -258,6 +258,9 @@ hermes-agent/
 │   └── <others>/         # disk-cleanup, google_meet, platforms, spotify,
 │                         #   strike-freedom-cockpit, ...
 ├── optional-skills/      # Heavier/niche skills shipped but NOT active by default
+├── optional-projects/    # Self-contained projects shipped but outside every
+│                         #   Hermes build/install/test path. NOT npm workspaces;
+│                         #   each owns its deps, toolchain and CI. See its README.
 ├── skills/               # Built-in skills bundled with the repo
 ├── ui-tui/               # Ink (React) terminal UI — `hermes --tui`
 │   └── src/              # entry.tsx, app.tsx, gatewayClient.ts + app/components/hooks/lib
