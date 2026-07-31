@@ -10,6 +10,14 @@ import type {
  * exercise the real adapter code with zero network access.
  */
 
+/**
+ * A market that always resolves three days from now, at the SDK's second
+ * precision. It was a fixed date until 2026-07-31, when the date arrived and
+ * horizon-sensitive monitor tests started reading "already resolved". Three
+ * days keeps it inside the week-long horizons those tests use.
+ */
+export const FIXTURE_END_DATE = `${new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 19)}Z`;
+
 export function rawMarket(index?: number): Record<string, unknown> {
   const suffix = index === undefined ? '' : `-${index}`;
   return {
@@ -28,7 +36,7 @@ export function rawMarket(index?: number): Record<string, unknown> {
       negRisk: false,
       startDate: '2025-05-02T15:48:10.582Z',
       // Second precision, exactly as the SDK returns it.
-      endDate: '2026-07-31T12:00:00Z',
+      endDate: FIXTURE_END_DATE,
     },
     outcomes: {
       yes: { label: 'Yes', tokenId: `tokenYES${suffix}`, price: '0.505' },
