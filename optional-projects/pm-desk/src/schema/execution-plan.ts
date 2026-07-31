@@ -202,6 +202,34 @@ const PaperOnlyConstraintsSchema = z
   })
   .strict();
 
+/**
+ * Opt-in proposals for code, datafeeds, harnesses, or a Claude Code Pro build
+ * after Joe approves. NEVER auto-executed by the provisioner.
+ */
+export const BuildProposalSchema = z
+  .object({
+    id: SlugSchema,
+    kind: z.enum([
+      'datafeed_or_api',
+      'collector_script',
+      'research_harness',
+      'mini_repo',
+      'claude_code_pro_task',
+      'other',
+    ]),
+    title: z.string().min(1).max(200),
+    problem: z.string().min(1).max(2000),
+    proposed_interface: z.string().min(1).max(2000),
+    validation_plan: z.string().min(1).max(2000),
+    cost_risk_notes: z.string().min(1).max(1000),
+    /** Agents may recommend CC Pro, but NEVER spawn without Joe. */
+    spawn_recommendation: z.enum(['none', 'claude_code_pro_after_approval']),
+    approval_required: z.literal(true),
+    /** pending until Joe greenlights; provisioner ignores these entirely. */
+    decision: z.enum(['pending', 'approved', 'denied', 'shelved']).default('pending'),
+  })
+  .strict();
+
 export const ExecutionPlanSchema = z
   .object({
     version: z.literal(1),
@@ -221,6 +249,11 @@ export const ExecutionPlanSchema = z
      */
     no_monitors_reason: z.string().min(1).max(1000).optional(),
     hermes_setup: z.array(HermesSetupSchema).max(30).default([]),
+    /**
+     * Stretch proposals: new APIs, harnesses, Claude Code Pro tasks. Shown in
+     * the Telegram brief. Require Joe's explicit OK. Never provisioned.
+     */
+    proposed_buildouts: z.array(BuildProposalSchema).max(10).default([]),
     telegram_brief: z.string().min(1).max(4096),
     approval: ApprovalSchema,
     paper_only_constraints: PaperOnlyConstraintsSchema,

@@ -48,14 +48,22 @@ describe('taxonomy file', () => {
     const ids = loadTaxonomy(TAXONOMY_PATH).families.map((f) => f.id);
     expect(ids).toEqual(
       expect.arrayContaining([
+        'fair_value_research',
+        'microstructure_event',
+        'intra_poly_coherence',
         'primary_source_sniper',
         'resolution_oracle',
+        'tool_and_build_proposals',
         'semantic_basis',
         'wallet_skill',
         'neg_risk_mm',
         'explore_seed',
       ]),
     );
+  });
+
+  it('is on taxonomy version 2+', () => {
+    expect(loadTaxonomy(TAXONOMY_PATH).version).toBeGreaterThanOrEqual(2);
   });
 
   it('carries the five primary_source_sniper cards', () => {
@@ -69,6 +77,21 @@ describe('taxonomy file', () => {
       'regulator_agency_notice',
       'corporate_ir_filing',
     ]);
+  });
+
+  it('includes fair-value and build-proposal families as active', () => {
+    const taxonomy = loadTaxonomy(TAXONOMY_PATH);
+    const status = (id: string) => taxonomy.families.find((f) => f.id === id)?.status;
+    expect(status('fair_value_research')).toBe('active');
+    expect(status('tool_and_build_proposals')).toBe('active');
+    expect(status('microstructure_event')).toBe('active');
+    expect(status('intra_poly_coherence')).toBe('active');
+  });
+
+  it('reserves a slot for fair_value_research and explore_seed', () => {
+    const taxonomy = loadTaxonomy(TAXONOMY_PATH);
+    const reserved = taxonomy.families.filter((f) => f.always_reserve_slot).map((f) => f.id);
+    expect(reserved).toEqual(expect.arrayContaining(['fair_value_research', 'explore_seed']));
   });
 
   it('defers the families the charter says are not yet available', () => {
@@ -204,9 +227,14 @@ describe('deterministic seed compilation', () => {
     expect(new Set(families).size).toBe(families.length);
   });
 
-  it('always reserves a slot for an explore_seed card when budget allows', () => {
-    const result = compileSeed({ ...baseInput(), maxCards: 3 });
+  it('always reserves a slot for explore_seed when budget allows', () => {
+    const result = compileSeed({ ...baseInput(), maxCards: 4 });
     expect(result.cards.some((c) => c.family_id === 'explore_seed')).toBe(true);
+  });
+
+  it('also reserves fair_value_research when budget allows', () => {
+    const result = compileSeed({ ...baseInput(), maxCards: 4 });
+    expect(result.cards.some((c) => c.family_id === 'fair_value_research')).toBe(true);
   });
 
   it('carries the paper-only invariant onto every emitted card', () => {

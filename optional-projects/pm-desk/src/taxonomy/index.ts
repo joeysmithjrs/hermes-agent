@@ -36,6 +36,8 @@ const CardSchema = z
     title: z.string().min(1),
     requires: z.array(z.string().min(1)).default([]),
     prohibits: z.array(z.enum(PROHIBITIONS)).default([]),
+    /** Relative pick weight inside a family (default 1). Higher = more often seeded. */
+    weight: z.number().positive().default(1),
     directive: z.string().min(10),
     deliverable: z.string().min(5).optional(),
   })
@@ -166,6 +168,28 @@ function seededShuffle<T>(items: readonly T[], rng: () => number): T[] {
   return out;
 }
 
+/** Weighted sample without replacement; higher weight is drawn earlier more often. */
+function weightedOrder<T extends { weight: number }>(items: readonly T[], rng: () => number): T[] {
+  if (items.length <= 1) return [...items];
+  const remaining = items.map((item) => ({ item, weight: Math.max(item.weight, 1e-9) }));
+  const ordered: T[] = [];
+  while (remaining.length > 0) {
+    const total = remaining.reduce((sum, row) => sum + row.weight, 0);
+    let pick = rng() * total;
+    let idx = remaining.length - 1;
+    for (let i = 0; i < remaining.length; i += 1) {
+      pick -= remaining[i]!.weight;
+      if (pick <= 0) {
+        idx = i;
+        break;
+      }
+    }
+    ordered.push(remaining[idx]!.item);
+    remaining.splice(idx, 1);
+  }
+  return ordered;
+}
+
 export function compileSeed(input: CompileSeedInput): CompileSeedResult {
   for (const capability of input.capabilities) {
     if (!(ALL_CAPABILITIES as readonly string[]).includes(capability)) {
@@ -189,7 +213,6 @@ export function compileSeed(input: CompileSeedInput): CompileSeedResult {
   const excluded: CompileSeedResult['excluded'] = [];
   const eligibleByFamily = new Map<string, SeededCard[]>();
   const reservedFamilies: string[] = [];
-
   for (const family of taxonomy.families) {
     if (family.status === 'deferred') {
       deferred.push({
@@ -207,7 +230,7 @@ export function compileSeed(input: CompileSeedInput): CompileSeedResult {
       continue;
     }
 
-    const eligible: SeededCard[] = [];
+    const eligible: Array<SeededCard & { weight: number }> = [];
     for (const card of family.cards) {
       const missing = card.requires.filter((requirement) => !held.has(requirement));
       if (missing.length > 0) {
@@ -228,11 +251,16 @@ export function compileSeed(input: CompileSeedInput): CompileSeedResult {
         prohibits: [...new Set(['live_execution', ...card.prohibits])],
         human_only: family.human_only,
         paper_only: true,
+        weight: card.weight ?? 1,
       });
     }
 
     if (eligible.length > 0) {
-      eligibleByFamily.set(family.id, seededShuffle(eligible, rng));
+      const ordered = weightedOrder(eligible, rng);
+      eligibleByFamily.set(
+        family.id,
+        ordered.map(({ weight: _w, ...seeded }) => seeded),
+      );
       if (family.always_reserve_slot) reservedFamilies.push(family.id);
     }
   }

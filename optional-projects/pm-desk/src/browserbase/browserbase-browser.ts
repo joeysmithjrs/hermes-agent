@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
+
 import Browserbase from '@browserbasehq/sdk';
-import { chromium } from 'playwright-core';
+import { chromium, type Download, type Page, type Response } from 'playwright-core';
 
 import { CollectionError, ConfigError } from '../core/errors.js';
 import type { SourceSpec } from '../schema/source-spec.js';
@@ -17,19 +19,16 @@ export interface BrowserbaseConfig {
 /**
  * Live deterministic collection via a Browserbase session driven by Playwright.
  *
- * Scope, deliberately narrow:
- * - one navigation to the spec's declared URL, one optional wait on the spec's
- *   declared `wait_for` selector, one `content()` read, then teardown;
- * - no clicking, typing, form submission, file upload or download;
- * - no cookie/storage persistence — the context is discarded with the session,
- *   and nothing is written back to disk;
- * - proxies/advanced stealth are reliability settings for sources the operator
- *   is authorized to read. There is no code here for defeating a login, paywall,
- *   CAPTCHA, geo/KYC gate, rate limit or anti-bot challenge, and adding any
- *   would be out of scope for this desk.
+ * Scope:
+ * - one navigation to the spec's declared URL;
+ * - HTML pages: optional wait_for + content();
+ * - PDF / octet downloads: capture download bytes (FDA media/* style) and
+ *   produce a stable text envelope for fingerprinting;
+ * - no clicking, typing, form submission, login/CAPTCHA workarounds;
+ * - no cookie/storage persistence.
  */
 export class BrowserbaseBrowser implements SourceBrowser {
-  readonly mode = 'live';
+  readonly mode = 'live' as const;
   private sessionId?: string;
   private cleanup: (() => Promise<void>)[] = [];
 
@@ -59,24 +58,11 @@ export class BrowserbaseBrowser implements SourceBrowser {
     const browser = await chromium.connectOverCDP(connectUrl);
     this.cleanup.push(() => browser.close());
 
-    const context = browser.contexts()[0] ?? (await browser.newContext());
+    const context = browser.contexts()[0] ?? (await browser.newContext({ acceptDownloads: true }));
     const page = context.pages()[0] ?? (await context.newPage());
 
     try {
-      const response = await page.goto(spec.url, {
-        waitUntil: 'domcontentloaded',
-        timeout: spec.timeout_ms,
-      });
-      if (response && response.status() >= 400) {
-        throw new CollectionError(`${spec.url} returned HTTP ${response.status()}`, {
-          hint: 'The desk does not retry past an error status or attempt to work around access controls. Verify the URL is publicly reachable.',
-        });
-      }
-      if (spec.wait_for) {
-        await page.waitForSelector(spec.wait_for, { timeout: spec.timeout_ms });
-      }
-      const html = await page.content();
-      return { html, final_url: page.url(), session_id: this.sessionId };
+      return await this.navigate(page, spec);
     } catch (cause) {
       if (cause instanceof Error && cause.name === 'TimeoutError') {
         throw new CollectionError(
@@ -91,8 +77,116 @@ export class BrowserbaseBrowser implements SourceBrowser {
     }
   }
 
+  private async navigate(page: Page, spec: SourceSpec): Promise<FetchedPage> {
+    const downloadWait = page
+      .waitForEvent('download', { timeout: spec.timeout_ms })
+      .catch(() => null);
+
+    // eslint-disable-next-line no-useless-assignment -- set of for goto, read after catch returns
+    let response: Response | null = null;
+    try {
+      response = await page.goto(spec.url, {
+        waitUntil: 'domcontentloaded',
+        timeout: spec.timeout_ms,
+      });
+    } catch (err) {
+      const download = await downloadWait;
+      if (download) {
+        return this.fromDownload(download, spec);
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      if (/ERR_ABORTED|Download is starting/i.test(message)) {
+        const late = await page.waitForEvent('download', { timeout: 5_000 }).catch(() => null);
+        if (late) return this.fromDownload(late, spec);
+      }
+      throw err;
+    }
+
+    const download = await downloadWait;
+    if (download) {
+      return this.fromDownload(download, spec);
+    }
+
+    if (response) {
+      const headers = response.headers();
+      const ctype = (headers['content-type'] || '').toLowerCase();
+      if (ctype.includes('application/pdf') || ctype.includes('octet-stream')) {
+        const body = await response.body();
+        return this.fromBinary(body, response.url(), ctype, spec);
+      }
+      if (response.status() >= 400) {
+        throw new CollectionError(`${spec.url} returned HTTP ${response.status()}`, {
+          hint: 'The desk does not retry past an error status or attempt to work around access controls. Verify the URL is publicly reachable.',
+        });
+      }
+    }
+
+    if (spec.wait_for) {
+      await page.waitForSelector(spec.wait_for, { timeout: spec.timeout_ms });
+    }
+    const html = await page.content();
+    return {
+      html,
+      final_url: page.url(),
+      session_id: this.sessionId,
+      content_type: 'text/html',
+    };
+  }
+
+  private async fromDownload(download: Download, spec: SourceSpec): Promise<FetchedPage> {
+    const failure = await download.failure();
+    if (failure) {
+      throw new CollectionError(`download failed for ${spec.url}: ${failure}`, {
+        hint: 'Browserbase could not save the file. Check the URL still serves a public PDF.',
+      });
+    }
+    const stream = await download.createReadStream();
+    if (!stream) {
+      throw new CollectionError(`download stream empty for ${spec.url}`, {
+        hint: 'Retry once; if it persists the CDN may require a different accept path.',
+      });
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const body = Buffer.concat(chunks);
+    const suggested = download.suggestedFilename() || 'download.bin';
+    const ctype = suggested.toLowerCase().endsWith('.pdf')
+      ? 'application/pdf'
+      : 'application/octet-stream';
+    return this.fromBinary(body, download.url() || spec.url, ctype, spec);
+  }
+
+  private fromBinary(
+    body: Buffer,
+    finalUrl: string,
+    contentType: string,
+    spec: SourceSpec,
+  ): FetchedPage {
+    const sha = createHash('sha256').update(body).digest('hex');
+    // Envelope is stable text the HTML extractor can fingerprint.
+    // Specs for PDFs should use text_selector "body".
+    const envelope = [
+      '<!doctype html><html><body>',
+      'pm-desk binary capture',
+      `content-type: ${contentType}`,
+      `bytes: ${body.length}`,
+      `sha256: ${sha}`,
+      `source_id: ${spec.id}`,
+      `final_url: ${finalUrl}`,
+      '</body></html>',
+    ].join('\n');
+    return {
+      html: envelope,
+      final_url: finalUrl,
+      session_id: this.sessionId,
+      content_type: contentType,
+      binary: body,
+    };
+  }
+
   async close(): Promise<void> {
-    // Discard the context (and with it every cookie) rather than saving state.
     for (const fn of this.cleanup.reverse()) {
       try {
         await fn();

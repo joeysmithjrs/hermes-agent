@@ -49,7 +49,13 @@ export interface DeskStore {
 }
 
 export function resolveHome(home?: string): string {
-  const raw = home ?? process.env.PM_DESK_HOME ?? './data';
+  // Prefer an explicit flag, then PM_DESK_HOME, then a stable path under the
+  // user home. Never default to `./data` relative to whatever cwd an agent
+  // happened to Terminal into — that was the source of STORE_ERROR on the
+  // first live morning run.
+  const fromEnv = process.env.PM_DESK_HOME;
+  const fallback = join(process.env.HOME || '/tmp', '.pm-desk', 'data');
+  const raw = home ?? fromEnv ?? fallback;
   return isAbsolute(raw) ? raw : resolve(process.cwd(), raw);
 }
 

@@ -91,7 +91,15 @@ export async function collectSource(
     };
   }
 
-  const raw = options.retainRaw === false ? null : store.artifacts.put(page.html, 'text/html');
+  // Prefer original PDF/octet bytes in CAS when we have them; otherwise HTML.
+  const rawMedia =
+    page.binary && page.content_type
+      ? page.content_type
+      : 'text/html';
+  const rawPayload =
+    page.binary && page.content_type ? page.binary : page.html;
+  const raw =
+    options.retainRaw === false ? null : store.artifacts.put(rawPayload, rawMedia);
 
   const row = store.sources.record({
     source_id: spec.id,

@@ -105,21 +105,29 @@ prompt: |
 
   Do not restate the monitor list or the commands; the renderer prints those
   underneath your text automatically.
-
   IF THE EVALUATION REJECTED EVERYTHING
   Still emit a valid plan. Set monitors to [], give no_monitors_reason, set
   hermes_setup to [], and write a brief that says the morning produced nothing
   worth watching and why. A denied or empty plan is a normal outcome. Inventing
   a monitor to avoid an empty list is the one genuinely bad outcome here.
 
-  Return STRICT JSON only — one object, no prose around it:
+  PROPOSED BUILDOUTS (optional, encouraged when tools are the bottleneck)
+  You MAY think beyond today's tool grant. If a datafeed, collector, harness,
+  mini-repo, or Claude Code Pro task would unlock a testable mid/low-cap seam,
+  put it in proposed_buildouts[]. Every item MUST have approval_required true
+  and decision "pending". spawn_recommendation is either "none" or
+  "claude_code_pro_after_approval" - never imply a spawn already happened.
+  The provisioner NEVER installs these. Joe must OK each one separately after
+  the monitor gate. Empty array is fine.
+
+  Return STRICT JSON only - one object, no prose around it:
   {
     "version": 1,
     "plan_id": "plan_<short stable id derived from the run date, seed and thesis>",
     "paper_only": true,
     "created_at": "UTC ISO-8601 with milliseconds and Z",
     "generator_run_id": "optional hermes run id",
-    "seed": {"seed_id":"string","run_date":"YYYY-MM-DD","taxonomy_version":1,"desk_state_hash":"optional 64 hex"},
+    "seed": {"seed_id":"string","run_date":"YYYY-MM-DD","taxonomy_version":2,"desk_state_hash":"optional 64 hex"},
     "thesis": {
       "title":"string",
       "edge_mechanism":"why the gap is available to THIS read-only paper desk",
@@ -150,6 +158,20 @@ prompt: |
     "no_monitors_reason":"only when monitors is empty",
     "hermes_setup":[
       {"action":"cron_create|install_prompts|workflow_register|webhook_subscribe_recipe|catalog_run","dry_run_command":"string","apply_command":"string","idempotency_key":"string","notes":"string"}
+    ],
+    "proposed_buildouts":[
+      {
+        "id":"lowercase_slug",
+        "kind":"datafeed_or_api|collector_script|research_harness|mini_repo|claude_code_pro_task|other",
+        "title":"string",
+        "problem":"string",
+        "proposed_interface":"string",
+        "validation_plan":"string",
+        "cost_risk_notes":"string",
+        "spawn_recommendation":"none|claude_code_pro_after_approval",
+        "approval_required":true,
+        "decision":"pending"
+      }
     ],
     "telegram_brief":"string, at most 4096 characters",
     "approval":{"required":true,"dual_control":true,"channel":"telegram","decision":"pending"},
