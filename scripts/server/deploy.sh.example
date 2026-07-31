@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Reference template for the self-hosted server-side deploy script invoked by
+# .github/workflows/deploy.yml (see the comment at the top of that file).
+#
+# This file is NOT executed by anything in this repo — it documents and
+# versions the expected shape of /home/hermes/deploy.sh, which lives only on
+# the production host and is invoked via the deploy key's `command=`
+# restriction in authorized_keys:
+#
+#   command="/home/hermes/deploy.sh",no-port-forwarding,no-X11-forwarding,no-agent-forwarding ssh-ed25519 AAAA...
+#
+# Install on the server as ~/deploy.sh (chmod +x), and restrict the deploy
+# key to it exactly as shown above so the workflow cannot run anything else.
+#
+# Why this exists in-tree even though it isn't run from here: the actual
+# server file previously existed ONLY on the production host, un-versioned,
+# undiscoverable, and un-reviewable. Anyone auditing the deploy path had to
+# SSH in and read it by hand. Keeping a maintained reference here means the
+# expected behavior (and any hardening added to it) is visible in code
+# review and diffable across changes, even though the live copy is deployed
+# out-of-band (scp/manual edit) rather than by CI.
+#
+# What this script must guarantee, in order:
+#   1. hermes update actually landed the new code (git pull succeeded).
+#   2. The gateway that comes back up is running THAT code — not just "a"
+#      process that happens to answer on the service — closing the code-skew
+#      gap described in gateway/code_skew.py and verified post-restart by
+#      hermes update itself (hermes_cli/update_cmd.py's post-restart
+#      fingerprint verification).
+#   3. A non-zero exit here fails the GitHub Actions job loudly, instead of
+#      the workflow reporting green while the gateway silently sits on stale
+#      code.
+
+set -euo pipefail
+
+LOG_FILE="$HOME/.hermes/logs/deploy.log"
+mkdir -p "$(dirname "$LOG_FILE")"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "=== deploy $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+
+# 1. Pull + reinstall + restart. `hermes update` already contains:
+#      - an update lock (concurrent-update guard)
+#      - a pre-update snapshot (--backup: full HERMES_HOME zip too)
+#      - post-pull syntax validation with auto-rollback on a broken checkout
+#      - dependency reinstall
+#      - gateway restart (systemd/launchd/manual) with drain + is-active polling
+#      - post-restart fresh-boot-rev verification (this is what actually
+#        confirms the NEW gateway process is running the code we just
+#        pulled, not just that a process exists)
+#    A non-zero exit here means hermes update itself detected a problem
+#    (failed rollback guard, restart that never came back active, or a
+#    gateway that came back up still reporting the OLD boot revision) —
+#    treat it as a hard deploy failure, do not paper over it.
+if ! hermes update --yes --backup; then
+    echo "✗ hermes update failed or reported an incomplete gateway restart."
+    echo "  Check ~/.hermes/logs/update.log and 'hermes gateway status' before retrying."
+    exit 1
+fi
+
+# 2. Belt-and-suspenders: hermes update's own post-restart verification
+#    already checked this, but re-confirm from a clean process here too
+#    (catches the rare case where the update process's own verification
+#    step was skipped, e.g. an old hermes version on this host that
+#    predates it). `hermes doctor` includes the "Gateway Code Freshness"
+#    check, which fails loudly (non-zero issues list) on any drift.
+echo "→ Verifying gateway service is active..."
+if command -v systemctl >/dev/null 2>&1 && systemctl --user list-units 'hermes-gateway*' --no-legend 2>/dev/null | grep -q .; then
+    if ! systemctl --user is-active --quiet hermes-gateway; then
+        echo "  Gateway not active after update — attempting one explicit restart..."
+        systemctl --user reset-failed hermes-gateway 2>/dev/null || true
+        systemctl --user restart hermes-gateway
+        sleep 5
+        systemctl --user is-active --quiet hermes-gateway || {
+            echo "✗ Gateway still not active after explicit restart."
+            exit 1
+        }
+    fi
+fi
+
+# 3. Exercise a real guarded path, not just a liveness ping. `hermes doctor`
+#    covers config/dependency/service health AND (see hermes_cli/doctor.py::
+#    _check_gateway_code_skew) compares the running gateway's self-reported
+#    boot revision against the current checkout — the same signal that
+#    would otherwise only surface reactively when a user tries to switch
+#    models mid-conversation.
+echo "→ Running hermes doctor (post-deploy health probe)..."
+if ! hermes doctor --strict; then
+    echo "✗ hermes doctor reported issues after deploy — see output above."
+    exit 1
+fi
+
+echo "✓ Deploy complete: $(hermes --version 2>/dev/null || echo unknown)"

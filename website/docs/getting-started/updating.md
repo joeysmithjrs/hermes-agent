@@ -30,6 +30,25 @@ When you run `hermes update`, the following steps occur:
 4. **Dependency install** — runs `uv pip install -e ".[all]"` to pick up new or changed dependencies
 5. **Config migration** — detects new config options added since your version and prompts you to set them
 6. **Gateway auto-restart** — running gateways are refreshed after the update completes so the new code takes effect immediately. Service-managed gateways (systemd on Linux, launchd on macOS) are restarted through the service manager. Manual gateways are relaunched automatically when Hermes can map the running PID back to a profile.
+7. **Fresh-code verification** — after each restart, Hermes polls the gateway's own self-reported boot revision until it matches the code that was just pulled (or retries the restart once, then fails the update with clear guidance). This closes the "code skew" gap described below — a restart that merely comes back "active" doesn't by itself prove the new process is running the new code.
+
+### Code skew: what it is and how Hermes prevents it
+
+The gateway is a long-lived process — its Python modules stay loaded in memory from the moment it boots. If the checkout on disk changes underneath it (a manual `git pull`, or the brief window before an update's own restart takes effect) without the process restarting, a later action can hit a first-time import of a new code path against a stale cached module and crash with a confusing `ImportError`. Hermes calls this **code skew** and defends against it in three layers:
+
+1. **Proactive, automatic**: while running, the gateway periodically checks its own boot revision against the checkout on disk (`gateway.code_skew_watch` in `config.yaml`, on by default, ~5 minute interval). If it detects drift, it logs a critical warning and restarts itself gracefully — no user action needed. Disable with:
+   ```yaml
+   gateway:
+     code_skew_watch:
+       enabled: false
+   ```
+2. **Reactive guard**: if skew is somehow still present, switching models (`/model`) is refused with a clear message naming both revisions and the exact recovery command, instead of risking a stale-module crash mid-conversation.
+3. **Visibility**: `hermes doctor` and `hermes gateway status` both report the running gateway's boot revision against the current checkout, so drift is visible even before either of the above triggers. `hermes update` itself verifies fresh code was actually loaded post-restart (see step 7 above) rather than trusting a bare "service is active" signal.
+
+If you ever see a message like *"This gateway is running code from `<rev1>` but the checkout on disk is now `<rev2>`"*, it means all three layers were bypassed (e.g. an external tool restarted the process incorrectly, or the watcher is disabled) — just restart the gateway:
+```bash
+hermes gateway restart
+```
 
 ### Updating against a non-default branch: `--branch`
 

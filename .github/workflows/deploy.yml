@@ -7,11 +7,16 @@ name: Deploy to production
 # `command=` restriction in authorized_keys — this workflow cannot run
 # anything else on the server even if it wanted to. deploy.sh runs
 # `hermes update --yes --backup` (git pull + dependency reinstall +
-# pre-update snapshot + hermes's own post-pull syntax/rollback guard),
+# pre-update snapshot + hermes's own post-pull syntax/rollback guard +
+# post-restart fresh-boot-rev verification, see gateway/code_skew.py),
 # then verifies hermes-gateway.service comes back active, falling back
-# to an explicit graceful reload if needed. See hermes_cli/main.py's
-# update command and website/docs/getting-started/updating.md for what
-# happens on the server side.
+# to an explicit graceful reload if needed, and finally runs
+# `hermes doctor --strict` as a post-deploy health probe. See
+# scripts/server/deploy.sh.example for a maintained, versioned
+# reference of the expected server-side script (the live copy on the
+# server is deployed out-of-band and isn't run from this repo), and
+# website/docs/getting-started/updating.md for what happens on the
+# server side.
 
 on:
   push:
