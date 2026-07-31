@@ -654,7 +654,7 @@ node -e '
 hermes workflow run workflows/pm-morning-generator-v0.yaml \
   --input "$(cat /tmp/seed-wrapped.json)" --dry-run
 
-#    Then the real run. This one costs money (max_budget_usd: 2.00) and ends
+#    Then the real run. This one costs money (max_budget_usd: 12.00) and ends
 #    awaiting_gate, with the brief delivered to Telegram.
 hermes workflow run workflows/pm-morning-generator-v0.yaml \
   --input "$(cat /tmp/seed-wrapped.json)"
