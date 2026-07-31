@@ -215,3 +215,67 @@ def test_no_output_block_is_unaffected_zero_impact_opt_in(wf_home):
 
     assert env["status"] == "succeeded", env
     assert "a" in env["succeeded"], env
+
+
+# ---------------------------------------------------------------------------
+# 6. Agent envelopes: the plan lives in `text`, however the model wrapped it
+# ---------------------------------------------------------------------------
+#
+# An agent node's stored output is `{text, node, result, ...}` with the model's
+# answer as a STRING in `text`. Schema validation must see through that wrapper,
+# and through whatever markdown the model put around the JSON, or a node that
+# emitted a perfectly good object fails SCHEMA and its downstream gate never
+# opens. (PM Desk run wf_9e6e868d97f1 lost a morning exactly this way.)
+
+
+def _envelope(text: str) -> dict:
+    return {"text": text, "node": "a", "result": None}
+
+
+def test_schema_accepts_json_wrapped_in_a_markdown_fence(wf_home):
+    vir = compile_text(SCHEMA_YAML, phase1_warn_overrides=True)
+    worker = FakeWorker(
+        outputs={"a": _envelope('## Result\n\n```json\n{"foo": "present"}\n```\n')}
+    )
+    env = run(vir, input={}, worker=worker)
+    assert env["status"] == "succeeded", env
+
+
+def test_schema_accepts_json_after_an_unrelated_fence(wf_home):
+    """A shell snippet first, the answer second. Only the first fence used to
+    be considered, so the answer after it was thrown away."""
+    vir = compile_text(SCHEMA_YAML, phase1_warn_overrides=True)
+    text = 'Run:\n```bash\nhermes cron create 30m\n```\nThen:\n```json\n{"foo": "present"}\n```'
+    env = run(vir, input={}, worker=FakeWorker(outputs={"a": _envelope(text)}))
+    assert env["status"] == "succeeded", env
+
+
+def test_schema_accepts_a_bare_object_surrounded_by_prose(wf_home):
+    vir = compile_text(SCHEMA_YAML, phase1_warn_overrides=True)
+    text = 'Here is the object: {"foo": "present"} — nothing else to report.'
+    env = run(vir, input={}, worker=FakeWorker(outputs={"a": _envelope(text)}))
+    assert env["status"] == "succeeded", env
+
+
+def test_schema_still_fails_on_markdown_with_no_json_at_all(wf_home):
+    """The recovery must not become "anything passes". Prose describing a file
+    the model wrote elsewhere is still a failed node."""
+    vir = compile_text(SCHEMA_YAML, phase1_warn_overrides=True)
+    text = "## Plan\n\n- wrote execution_plan.json to the workspace\n- 2 monitors\n"
+    env = run(vir, input={}, worker=FakeWorker(outputs={"a": _envelope(text)}))
+
+    assert env["status"] == "failed", env
+    rec = checkpoint.load_run_record(env["run_id"])
+    a_nr = next(nrd for nrd in rec["node_runs"].values() if nrd["node_id"] == "a")
+    assert a_nr["error"]["code"] == "SCHEMA", a_nr["error"]
+
+
+def test_schema_still_fails_when_the_embedded_json_is_wrong(wf_home):
+    vir = compile_text(SCHEMA_YAML, phase1_warn_overrides=True)
+    text = '```json\n{"bar": 1}\n```'
+    env = run(vir, input={}, worker=FakeWorker(outputs={"a": _envelope(text)}))
+
+    assert env["status"] == "failed", env
+    rec = checkpoint.load_run_record(env["run_id"])
+    a_nr = next(nrd for nrd in rec["node_runs"].values() if nrd["node_id"] == "a")
+    assert a_nr["error"]["code"] == "SCHEMA", a_nr["error"]

@@ -139,27 +139,55 @@ def _new_child_node_run_id(run_id: str, kind: str, node_id: str, stage: str, age
 _INTERNAL_CHILD_KINDS = ("debate", "supervisor")
 
 
+_FENCE_RE = None  # compiled lazily in _parse_loose_json
+
+
 def _parse_loose_json(text: str) -> Any:
-    """JSON a model may fence or bury in prose — best-effort, never raises."""
+    """JSON a model may fence or bury in prose — best-effort, never raises.
+
+    Every plausible body is tried in preference order — ```json fences first,
+    then any other fence, then the whole text — because a model that answers
+    with a shell snippet followed by its actual JSON payload used to lose:
+    only the FIRST fence was considered, and everything after it was discarded
+    along with the answer.
+    """
     import json
     import re
+
+    global _FENCE_RE
+    if _FENCE_RE is None:
+        _FENCE_RE = re.compile(r"```(?P<lang>[A-Za-z0-9_+-]*)\s*\n?(?P<body>[\s\S]*?)```")
 
     trimmed = (text or "").strip()
     if not trimmed:
         return None
-    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", trimmed, re.IGNORECASE)
-    body = (fenced.group(1) if fenced else trimmed).strip()
-    try:
-        return json.loads(body)
-    except Exception:
-        pass
-    start = body.find("{")
-    end = body.rfind("}")
-    if start >= 0 and end > start:
+
+    json_fences: list[str] = []
+    other_fences: list[str] = []
+    for match in _FENCE_RE.finditer(trimmed):
+        body = (match.group("body") or "").strip()
+        if not body:
+            continue
+        if (match.group("lang") or "").lower() in ("json", "json5", ""):
+            json_fences.append(body)
+        else:
+            other_fences.append(body)
+
+    for body in [*json_fences, *other_fences, trimmed]:
         try:
-            return json.loads(body[start : end + 1])
+            return json.loads(body)
         except Exception:
-            return None
+            pass
+        # Prose around a single object: take the outermost braces. Deliberately
+        # not attempted across a whole markdown document with several objects —
+        # that slice would span the prose between them and never parse anyway.
+        start = body.find("{")
+        end = body.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                return json.loads(body[start : end + 1])
+            except Exception:
+                pass
     return None
 
 
