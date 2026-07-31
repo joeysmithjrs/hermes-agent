@@ -50,6 +50,20 @@ WORKFLOW
   workflow render --signal <id>   Render the adjudication prompt (no LLM call)
   workflow adjudicate --signal <id> --result <file>   Record a result
 
+EXECUTION PLAN (what the morning generator emits and the gate approves)
+  plan validate --file <f>        Validate an ExecutionPlan
+  plan show --file <f>            Full plan, human-readable
+  plan render-telegram --file <f> The approval message, commands verbatim
+  plan schema                     JSON Schema for the plan
+  plan from-run --run-id <id>     Extract the plan from a Hermes run (--out <f>)
+  plan approve --file <f> --run-id <id>   Stamp from Hermes' recorded gate decision
+
+PROVISION (deterministic; installs what an approved plan describes)
+  provision dry-run --plan <f>    Print every file and command, write nothing
+  provision apply --plan <f>      Install (needs --i-approved-this-plan)
+  provision status --plan-id <id> What is installed for a plan
+  provision revoke --plan-id <id> Remove this plan's cron jobs
+
 HERMES (optional binding; dry-run by default, never edits Hermes config)
   hermes workflows                Print the shipped workflows and their paths
   hermes install-prompts          Plan the prompt-library install (--apply to write)
@@ -80,6 +94,10 @@ async function loadHandler(command: string): Promise<Handler | undefined> {
       return (await import('./commands/taxonomy.js')).taxonomyCommand;
     case 'workflow':
       return (await import('./commands/workflow.js')).workflowCommand;
+    case 'plan':
+      return (await import('./commands/plan.js')).planCommand;
+    case 'provision':
+      return (await import('./commands/provision.js')).provisionCommand;
     case 'hermes':
       return (await import('./commands/hermes.js')).hermesCommand;
     default:

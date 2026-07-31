@@ -1,5 +1,25 @@
 # PM Desk — paper research spine (prepare → seed → directive → DQ → DD → eval).
 #
+# ***************************************************************************
+# SUPERSEDED for the product loop by `pm-morning-generator-v0.yaml`.
+#
+# Kept for reference, not deleted, because the prompt libraries and the seed
+# handoff below are the ones the generator inherited. Two reasons not to run it:
+#
+#   1. It ends at a bare gate. An approval here reaches nothing — there is no
+#      ExecutionPlan and nothing for a provisioner to install, so the best
+#      outcome is an opinion nobody acted on.
+#   2. Its `condition:` edges cannot fire on this host. An agent node's output
+#      is the envelope {text, node, result, ...} with the model's JSON inside
+#      `text` as a string, so `$.decision == 'advance'` raises TemplateError and
+#      `_edge_state` fails it closed to "blocked" — `dd` onwards would be
+#      skipped. `over: "{{ dq.output.survivors }}"` fails the same way, and
+#      fails the node outright. Both verified against workflow/expr.py here.
+#
+# The generator is a straight line with one fanout over real input data for
+# exactly that reason. See its header comment.
+# ***************************************************************************
+#
 # This is the BROAD, operator-initiated research workflow. It is deliberately
 # separate from pm_signal_adjudication_v0, which is the narrow artifact-driven
 # path a detected signal triggers. Use this one to decide what the desk should

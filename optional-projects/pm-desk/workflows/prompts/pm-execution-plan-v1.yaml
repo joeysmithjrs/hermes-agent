@@ -1,0 +1,156 @@
+name: pm-execution-plan-v1
+version: 1
+description: Emits the ExecutionPlan artifact the Telegram gate approves and the provisioner installs
+tags: [pm-desk, paper, plan, execution-plan]
+prompt: |
+  You write the ExecutionPlan. It is the last thing a model produces in this
+  workflow, and everything after it is deterministic code.
+
+  Seed:        {{ seed.output }}
+  Desk state:  {{ prepare.output }}
+  DD dossiers: {{ dd.output }}
+  Evaluation:  {{ eval.output }}
+
+  WHAT HAPPENS TO WHAT YOU WRITE
+  Your JSON is validated against a strict schema. If it fails, the morning is
+  wasted — nothing downstream can repair it. It is then rendered into a single
+  Telegram message and shown to Joe, who approves or denies. On approval, a
+  deterministic provisioner reads the same JSON and installs the monitors you
+  described as real cron jobs. No agent runs after the gate. Nobody is going to
+  fix your thesis, tighten your thresholds, or notice that you left out the
+  reason this could be wrong.
+
+  So write for two readers: a person deciding in thirty seconds on a phone, and
+  a parser with no tolerance.
+
+  PAPER ONLY, ALWAYS
+  `paper_only` is true and `paper_only_constraints.live_execution_allowed` is
+  false, in every plan, without exception. This desk cannot place an order,
+  hold a position, or sign anything. Do not write a plan whose value depends on
+  doing so, and do not describe sizing, entries, or fills.
+
+  HARD SCHEMA RULES (violating any of these fails validation)
+  - version is exactly 1. paper_only is exactly true.
+  - paper_only_constraints is exactly
+    {"live_execution_allowed": false, "fill_type_if_ledger": "SIMULATED_NO_FILL"}.
+  - approval is exactly
+    {"required": true, "dual_control": true, "channel": "telegram", "decision": "pending"}.
+    You never decide your own gate.
+  - created_at is UTC ISO-8601 with milliseconds and a literal Z:
+    "2026-07-31T06:12:00.000Z".
+  - seed.run_date is "YYYY-MM-DD". seed.taxonomy_version is a positive integer.
+  - No extra fields anywhere. An unrecognised key is a validation error, not a
+    harmless addition.
+  - thesis.market_refs has at least one entry, and each entry has at least one
+    of market_id, condition_id, token_id, question.
+  - thesis.invalidations has at least one entry.
+  - research_summary.source_graph has at least one entry.
+  - monitor_id values are unique and are lowercase slugs.
+  - hermes_setup idempotency_key values are unique.
+  - telegram_brief is at most 4096 characters.
+  - Either monitors is non-empty, or no_monitors_reason explains why the desk
+    should record a thesis it cannot watch.
+
+  MONITORS
+  Copy the evaluator's monitor_bindings into full specs. Each declarative
+  monitor (any kind except custom_script) needs `spec_inline`: a complete
+  MonitorSpec with id, kind and params. Where the monitor watches a document,
+  include `source_spec_inline` with the SourceSpec from the DD draft — id, an
+  https url, allowed_domains, and extract.text_selector as a plain CSS
+  selector. Both are validated by the provisioner before anything is installed,
+  so an invented field stops the install rather than silently doing nothing.
+
+  Params by kind:
+    primary_source_change    source_id, optionally max_staleness_s,
+                             min_diff_chars, market_refs
+    market_move              token_id, at least one of abs_move / rel_move,
+                             lookback_s, max_staleness_s
+    spread_widening          token_id, max_spread, alert_on_missing_book
+    source_market_divergence source_id, market{token_id,...}, horizon_s
+
+  Schedules group into cron jobs: monitors sharing a schedule string share one
+  job. Prefer few schedules. "30m" and "1h" are the normal answers.
+
+  HERMES SETUP
+  These are shown to Joe verbatim before he decides, so write the command you
+  actually mean. Use the literal placeholders <HERMES_HOME> and <DESK_HOME> for
+  directories — you do not know which ones the operator will pick, and the
+  provisioner expands them.
+
+  For each distinct monitor schedule, emit a cron_create item shaped exactly:
+    action:            "cron_create"
+    apply_command:     "hermes cron create <SCHEDULE> --no-agent --script pm-desk-<PLAN_ID>-<SLUG>.sh --name pm-desk-<PLAN_ID>-<SLUG>"
+                       (append " --deliver telegram" when any monitor in that
+                       schedule has notify_telegram in on_fire)
+    idempotency_key:   "<PLAN_ID>:cron:<SLUG>"
+  where <SLUG> is the schedule lowercased with every run of non-alphanumeric
+  characters replaced by a single "-" ("30m" -> "30m", "0 9 * * *" -> "0-9").
+
+  Add an install_prompts item when any monitor has optional_adjudicate in
+  on_fire, with apply_command
+  "pm-desk hermes install-prompts --hermes-home <HERMES_HOME> --apply".
+
+  Anything else — webhooks especially — you may include as a
+  webhook_subscribe_recipe. It will be printed for the operator and never
+  executed: enabling a webhook edits their Hermes config, which this desk does
+  not do.
+
+  THE TELEGRAM BRIEF
+  Plain text, no markup. Open by stating it is paper only. Say what the desk
+  wants to watch and why in a few sentences a tired person can follow. Say what
+  gets installed. Then — and this is the part that earns the approval being
+  worth anything — name the weakest link and say what would make you deny it.
+  A brief with no honest case against itself is a brief nobody can act on.
+
+  Do not restate the monitor list or the commands; the renderer prints those
+  underneath your text automatically.
+
+  IF THE EVALUATION REJECTED EVERYTHING
+  Still emit a valid plan. Set monitors to [], give no_monitors_reason, set
+  hermes_setup to [], and write a brief that says the morning produced nothing
+  worth watching and why. A denied or empty plan is a normal outcome. Inventing
+  a monitor to avoid an empty list is the one genuinely bad outcome here.
+
+  Return STRICT JSON only — one object, no prose around it:
+  {
+    "version": 1,
+    "plan_id": "plan_<short stable id derived from the run date, seed and thesis>",
+    "paper_only": true,
+    "created_at": "UTC ISO-8601 with milliseconds and Z",
+    "generator_run_id": "optional hermes run id",
+    "seed": {"seed_id":"string","run_date":"YYYY-MM-DD","taxonomy_version":1,"desk_state_hash":"optional 64 hex"},
+    "thesis": {
+      "title":"string",
+      "edge_mechanism":"why the gap is available to THIS read-only paper desk",
+      "market_refs":[{"market_id":"...","condition_id":"...","token_id":"...","question":"...","outcome":"YES|NO"}],
+      "horizon":"string",
+      "invalidations":["string"],
+      "why_not_retail_hopium":"string"
+    },
+    "research_summary": {
+      "source_graph":[{"source":"string","authority":"primary|secondary|unknown","claim":"string","url":"https://...","observed_at":"string"}],
+      "rules_resolution":"string",
+      "unknowns":["string"],
+      "dq_notes":["string"],
+      "eval_scorecard":{"name":0.0}
+    },
+    "monitors":[
+      {
+        "monitor_id":"lowercase_slug",
+        "kind":"primary_source_change|market_move|source_market_divergence|custom_script",
+        "priority":"script_first|agent_reasoning",
+        "spec_inline":{"id":"lowercase_slug","kind":"...","severity":"warn","cooldown_s":3600,"params":{}},
+        "source_spec_inline":{"id":"lowercase_slug","url":"https://...","allowed_domains":["example.gov"],"extract":{"text_selector":"main","fields":{}}},
+        "schedule":"30m",
+        "on_fire":["notify_telegram","queue_ingress"],
+        "notes":"string"
+      }
+    ],
+    "no_monitors_reason":"only when monitors is empty",
+    "hermes_setup":[
+      {"action":"cron_create|install_prompts|workflow_register|webhook_subscribe_recipe|catalog_run","dry_run_command":"string","apply_command":"string","idempotency_key":"string","notes":"string"}
+    ],
+    "telegram_brief":"string, at most 4096 characters",
+    "approval":{"required":true,"dual_control":true,"channel":"telegram","decision":"pending"},
+    "paper_only_constraints":{"live_execution_allowed":false,"fill_type_if_ledger":"SIMULATED_NO_FILL"}
+  }

@@ -7,20 +7,91 @@ alerting desk.
 > workspace and nothing in Hermes builds, installs, imports or runs it — see
 > [`../README.md`](../README.md) for that contract. Requires **Node >= 24**.
 
-It watches named primary sources and official public market data, detects
-material changes with deterministic code, and hands a single evidence-backed
-signal to a narrow LLM adjudicator that decides `ignore` / `watch` /
-`paper_alert`. A `paper_alert` writes a row to a local paper ledger and renders
-a Telegram-ready message.
+Every morning it generates research directives from a deterministic seed, does
+real tool-using due diligence on the survivors, and emits **one ExecutionPlan**:
+an edge story, the monitors that would test it, and the exact commands that
+would install them. Joe approves or denies that plan in Telegram. On approval a
+deterministic provisioner installs the monitors as Hermes cron jobs, and from
+then on pure code watches primary sources and public market data and stays
+silent until something fires.
 
 > **PAPER ONLY.** This desk cannot trade, sign, connect a wallet, place an order,
 > or participate in UMA. That is enforced structurally — by an empty tool
-> allowlist, by database CHECK constraints, and by a guard test that scans all of
-> `src/` — not by convention. See [Paper-only boundary](#paper-only-boundary).
+> allowlist, by database CHECK constraints, by zod literals in the plan schema,
+> and by a guard test that scans all of `src/` — not by convention. See
+> [Paper-only boundary](#paper-only-boundary).
+
+---
+
+## The loop
+
+```text
+  cron (or by hand)
+        │
+        ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  workflows/pm-morning-generator-v0.yaml         ← run THIS one       │
+  │                                                                      │
+  │  prepare → seed → directive → dq → dd → eval → plan → paper_gate    │
+  │   ↑         ↑        ↑        ↑     ↑      ↑      ↑                  │
+  │  desk    compiled  fanout   default │   default  emits an            │
+  │  state   directive  ≤ 4     reject  │   reject   ExecutionPlan       │
+  │          cards              first   │                               │
+  │                                     └─ the ONLY node with research   │
+  │                                        tools: web + browser + read   │
+  └──────────────────────────────────┬───────────────────────────────────┘
+                                     │  ExecutionPlan (zod-validated)
+                                     ▼
+                        ┌────────────────────────────┐
+                        │  TELEGRAM GATE             │
+                        │  dual control · Joe        │
+                        │  approve / shelve / modify │
+                        └─────────────┬──────────────┘
+                                      │ approve, recorded by Hermes
+                                      ▼
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  DETERMINISTIC PROVISIONER   pm-desk provision apply                 │
+  │  no agent · no model · no string from the plan is ever executed      │
+  │                                                                      │
+  │  writes MonitorSpecs + SourceSpecs + a per-schedule sweep script     │
+  │  spawns `hermes cron create --no-agent` (argv array, via execFile)   │
+  │  records every file and job in SQLite, so revoke is precise          │
+  └──────────────────────────────────┬───────────────────────────────────┘
+                                     ▼
+                          monitors run in the background
+                          silent unless something fires
+                                     │
+                                     ▼
+                    notify · queue to ingress · paper ledger
+```
+
+Four properties hold this together:
+
+1. **Agents never own a polling loop and never get tools to discover change
+   after the plan is approved.** Collectors and monitors are deterministic code.
+   By the time a model is invoked on a signal, the change is already detected
+   and its evidence already hashed and stored.
+2. **The approval covers the argv.** `pm-desk plan render-telegram` prints every
+   setup command verbatim, and drops brief text rather than commands when the
+   message would overflow. Dual control over a summary nobody could check is a
+   rubber stamp.
+3. **No string an agent wrote is executed.** The provisioner derives its own
+   argv from the plan's validated monitors and spawns that. A plan's
+   `apply_command` is display text; when it disagrees with the derived command,
+   that is reported as drift and the derived one still runs.
+4. **Nothing can flip a plan to approved except Hermes.** `pm-desk plan approve`
+   reads the decision Hermes wrote to
+   `runs/<id>/gate_signals/<gate>.json` when Joe answered Telegram. It never
+   writes that file, and `modify` maps to denied.
+
+Jump to [First live morning run](#first-live-morning-run) for the exact
+commands.
 
 ---
 
 ## Architecture
+
+The detection half — what a provisioned monitor actually does when it runs.
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -111,15 +182,14 @@ a Telegram-ready message.
                                    "PAPER ONLY" on line 1
 ```
 
-Two properties hold this together:
+**Every LLM claim in this band is traceable.** The adjudicator has `tools: []`,
+so it cannot look anything up. Anything it asserts must come from the rendered
+evidence, which is content-addressed and re-verifiable.
 
-1. **Agents never own a polling loop and never get tools to discover change.**
-   Collectors and monitors are deterministic code. By the time a model is
-   invoked, the change is already detected and its evidence already hashed and
-   stored.
-2. **Every LLM claim is traceable.** The adjudicator has `tools: []`, so it
-   cannot look anything up. Anything it asserts must come from the rendered
-   evidence, which is content-addressed and re-verifiable.
+The generator's DD node *does* have research tools — that is the whole point of
+having a separate generation phase. Deciding what the desk should watch requires
+going and reading primary sources. Deciding whether one already-detected change
+matters does not, and must not.
 
 ---
 
@@ -127,7 +197,10 @@ Two properties hold this together:
 
 ```text
 src/core         typed errors, UTC time, content hashing, deterministic ids
-src/schema       zod schemas: SignalEnvelope, SourceSpec, MonitorSpec, Adjudication
+src/schema       zod schemas: SignalEnvelope, SourceSpec, MonitorSpec,
+                 Adjudication, ExecutionPlan
+src/plan         ExecutionPlan rendering, recovery from a Hermes run, gate-derived approval
+src/provision    pure derivation → files + argv, then apply/revoke/status + records
 src/store        SQLite migrations, repositories, content-addressed artifacts
 src/polymarket   official public SDK adapter, normalizer, snapshots, polling feed
 src/browserbase  navigation policy, deterministic extraction, live/fixture browsers
@@ -140,9 +213,10 @@ src/hermes       packaged-asset paths + the opt-in prompt-library installer
 src/cli          pm-desk command-line entry point
 specs/           sample SourceSpecs and MonitorSpecs
 fixtures/        offline HTML + adjudication fixtures (make the E2E runnable)
+fixtures/plans/  a complete example ExecutionPlan, validated by the tests
 taxonomy/        cards.yaml — the versioned directive taxonomy
 workflows/       Hermes workflow definitions
-workflows/prompts/  prompt libraries the research spine needs (install them)
+workflows/prompts/  prompt libraries the generator needs (install them)
 scripts/         offline demo, Node preflight, monitor sweep, carry-forward proof
 tests/           unit + guard + end-to-end; tests/live/ is opt-in only
 ```
@@ -346,6 +420,43 @@ npx tsx src/cli/pm-desk.ts ledger render --entry <entry_id>
 npx tsx src/cli/pm-desk.ts ledger export > paper-ledger.json
 ```
 
+### Execution plan
+
+```bash
+npx tsx src/cli/pm-desk.ts plan validate --file plan.json
+npx tsx src/cli/pm-desk.ts plan show --file plan.json
+npx tsx src/cli/pm-desk.ts plan render-telegram --file plan.json
+npx tsx src/cli/pm-desk.ts plan schema > execution-plan.schema.json
+
+# Recover the plan a generator run produced, and stamp Hermes' gate decision.
+npx tsx src/cli/pm-desk.ts plan from-run --run-id <id> --out plan.json
+npx tsx src/cli/pm-desk.ts plan approve --file plan.json --run-id <id>
+```
+
+Everything except `from-run --out` and `approve` is read-only. There is a
+complete example at `fixtures/plans/example_execution_plan.json`, which the test
+suite validates so it cannot drift from the schema.
+
+### Provision
+
+```bash
+# Preview. Writes nothing, spawns nothing. Works on a still-pending plan.
+npx tsx src/cli/pm-desk.ts provision dry-run \
+  --plan plan.json --hermes-home "$HERMES_HOME" --desk-home "$PM_DESK_HOME"
+
+# Install. Needs approval.decision == approved AND the acknowledgement.
+npx tsx src/cli/pm-desk.ts provision apply \
+  --plan plan.json --hermes-home "$HERMES_HOME" --desk-home "$PM_DESK_HOME" \
+  --i-approved-this-plan
+
+npx tsx src/cli/pm-desk.ts provision status --plan-id <plan_id> --desk-home "$PM_DESK_HOME"
+npx tsx src/cli/pm-desk.ts provision revoke --plan-id <plan_id> --desk-home "$PM_DESK_HOME"
+```
+
+`apply` is idempotent on `(plan_id, idempotency_key)`: running it twice spawns
+nothing the second time. A previously *failed* action is retried, because "it
+failed" and "it is done" must not look the same.
+
 ### Store
 
 ```bash
@@ -449,21 +560,33 @@ Three distinct paths, deliberately kept separate:
 | | What it is | Default |
 |---|---|---|
 | **(a) PM Desk local ingress** | The desk's own loopback HMAC server. Validates the envelope schema, records **before** dispatching, enforces idempotency. | on when you run `ingress serve`; dispatcher = `outbox` |
-| **(b) Hermes native webhook** | A generic Hermes delivery route. Does none of the above validation. | off; global webhook config untouched |
-| **(c) Hermes cron** | A schedule for the deterministic monitor sweep. | off; no job is created |
+| **(b) Hermes native webhook** | A generic Hermes delivery route. Does none of the above validation. | off; global webhook config untouched, and the provisioner will not enable one |
+| **(c) Hermes cron** | A schedule for the deterministic monitor sweep. | off, until `pm-desk provision apply` creates jobs for a plan Joe approved |
 
 There is no agent polling loop anywhere. Detection is code.
 
-### Install the prompt libraries (required for the research spine)
+### The three shipped workflows
 
-`pm_desk_paper_v0` uses Hermes' `spec.prompt: {library: <name>}` form. Hermes
-resolves those names against `$HERMES_HOME/workflows/prompts/` and its own
+```bash
+npx tsx src/cli/pm-desk.ts hermes workflows
+```
+
+| Workflow | Role |
+|---|---|
+| **`pm-morning-generator-v0.yaml`** | **The product loop.** Morning idea → ExecutionPlan → Telegram gate. Run this one. |
+| `pm-signal-adjudication-v0.yaml` | Optional subroutine: does one *already-fired* signal matter? One agent node, `tools: []`. |
+| `pm-desk-paper-v0.yaml` | Superseded by the generator, kept for reference. Ends at a bare gate that nothing can act on, and its `condition:` edges cannot fire on this host (see the file's header). |
+
+### Install the prompt libraries (required for the generator)
+
+`pm_morning_generator_v0` uses Hermes' `spec.prompt: {library: <name>}` form.
+Hermes resolves those names against `$HERMES_HOME/workflows/prompts/` and its own
 builtin tree, and **hard-rejects an unknown library** — there is no
-not-found-means-empty-prompt fall-through. Until the five libraries this package
-ships are installed, the research spine does not validate:
+not-found-means-empty-prompt fall-through. Until the libraries this package ships
+are installed, the generator does not validate:
 
 ```console
-$ hermes workflow validate workflows/pm-desk-paper-v0.yaml
+$ hermes workflow validate workflows/pm-morning-generator-v0.yaml
 REJECTED
   [ERROR] PROMPT_LIBRARY prepare: unknown prompt library 'pm-prepare-context-v1' ...
 ```
@@ -483,20 +606,134 @@ npx tsx src/cli/pm-desk.ts hermes install-prompts --hermes-home /path/to/home --
 ```
 
 It refuses to overwrite a library you have edited locally unless you pass
-`--force`. Afterwards:
+`--force`. Afterwards (real output from this host):
 
 ```console
-$ hermes workflow validate workflows/pm-desk-paper-v0.yaml
-OK  workflow=pm_desk_paper_v0 hash=sha256:1b620a76...
+$ hermes workflow validate workflows/pm-morning-generator-v0.yaml
+OK  workflow=pm_morning_generator_v0 hash=sha256:9efb9e6136c35b2b...
 ```
 
 `pm_signal_adjudication_v0` needs none of this — its prompt is an inline string
 that the launcher fills in.
 
+---
+
+## First live morning run
+
+The one sequence to follow after merging. Steps 1–4 are Hermes; steps 5–8 are
+the deterministic half.
+
 ```bash
-# Where the shipped workflows live (absolute paths, usable from any cwd):
-npx tsx src/cli/pm-desk.ts hermes workflows
+export PATH="$HOME/.local/node-v24.18.1-linux-x64/bin:$PATH"   # Node >= 24
+cd optional-projects/pm-desk && npm ci
+
+# Pick your homes explicitly. Use throwaways the first time through.
+export HERMES_HOME="$HOME/.hermes"          # or: $(mktemp -d)
+export PM_DESK_HOME="$PWD/data"
+
+# 1. Install the prompt libraries into that home (dry-run first if you like).
+npx tsx src/cli/pm-desk.ts hermes install-prompts --hermes-home "$HERMES_HOME" --apply
+hermes workflow validate workflows/pm-morning-generator-v0.yaml
+
+# 2. Compile the morning's directive seed. Deterministic: same date + desk
+#    state + nonce gives the same cards.
+npx tsx src/cli/pm-desk.ts taxonomy compile --max-cards 3 --json > /tmp/seed.json
+
+# 3. Wrap it into the workflow's input shape.
+node -e '
+  const s = JSON.parse(require("fs").readFileSync("/tmp/seed.json","utf8"));
+  process.stdout.write(JSON.stringify({
+    directive_cards: s.cards,
+    seed: { seed_id: s.seed, run_date: s.run_date,
+            taxonomy_version: s.taxonomy_version, desk_state_hash: s.desk_state_hash },
+  }));
+' > /tmp/seed-wrapped.json
+
+# 4. Prove the wiring at zero cost — compiles and plans the ready set, spawns
+#    no agent and calls no model.
+hermes workflow run workflows/pm-morning-generator-v0.yaml \
+  --input "$(cat /tmp/seed-wrapped.json)" --dry-run
+
+#    Then the real run. This one costs money (max_budget_usd: 2.00) and ends
+#    awaiting_gate, with the brief delivered to Telegram.
+hermes workflow run workflows/pm-morning-generator-v0.yaml \
+  --input "$(cat /tmp/seed-wrapped.json)"
 ```
+
+Joe answers the gate in Telegram. If you are deciding from a terminal instead:
+
+```bash
+hermes workflow list
+hermes workflow gate <run_id> paper_gate --decide approve   # or shelve / modify
+```
+
+Then the deterministic half:
+
+```bash
+# 5. Recover the plan from the run's node outputs.
+npx tsx src/cli/pm-desk.ts plan from-run \
+  --run-id <run_id> --hermes-home "$HERMES_HOME" --out /tmp/plan.json
+
+# 6. Check it, and read exactly what was approved.
+npx tsx src/cli/pm-desk.ts plan validate --file /tmp/plan.json
+npx tsx src/cli/pm-desk.ts plan render-telegram --file /tmp/plan.json
+
+# 7. Stamp the approval FROM HERMES' OWN RECORD. This reads
+#    $HERMES_HOME/workflows/runs/<run_id>/gate_signals/paper_gate.json and
+#    never writes it. Exits 1 if Joe did not approve.
+npx tsx src/cli/pm-desk.ts plan approve \
+  --file /tmp/plan.json --run-id <run_id> --hermes-home "$HERMES_HOME"
+
+# 8. Preview every file and command. Writes nothing, spawns nothing.
+npx tsx src/cli/pm-desk.ts provision dry-run \
+  --plan /tmp/plan.json --hermes-home "$HERMES_HOME" --desk-home "$PM_DESK_HOME"
+
+#    Install for real.
+npx tsx src/cli/pm-desk.ts provision apply \
+  --plan /tmp/plan.json --hermes-home "$HERMES_HOME" --desk-home "$PM_DESK_HOME" \
+  --i-approved-this-plan
+```
+
+Afterwards:
+
+```bash
+npx tsx src/cli/pm-desk.ts provision status --plan-id <plan_id> --desk-home "$PM_DESK_HOME"
+hermes cron list
+npx tsx src/cli/pm-desk.ts provision revoke --plan-id <plan_id> --desk-home "$PM_DESK_HOME"
+```
+
+### Why steps 5–8 are a CLI bridge and not a workflow node
+
+Hermes resolves a `run:` script node against a registry that is **frozen at
+import** (`workflow/runtime/scripts.py`; mutation after bootstrap raises). On
+this host it holds exactly: `best`, `concat`, `first_k`, `judge_converge`,
+`majority`, `top_k`, `workflow.examples.echo`,
+`workflow.examples.notify_telegram`. There is no `pm_desk.*` callable and this
+package does not add one, because doing so would mean editing Hermes core.
+
+So a YAML node reading `run: pm_desk.provision` would simply fail to compile.
+The bridge is the CLI, exactly as it is for the paper ledger. That is a real
+seam, not a hidden one: the workflow's job ends when it has produced a
+schema-valid artifact, and a separate program acts on it.
+
+The upside is that the gate means something. The provisioner is a different
+process, run deliberately, that re-validates the plan and refuses to apply
+anything Hermes did not record an approval for.
+
+### What the provisioner will not do
+
+- **Enable a Hermes webhook.** A `webhook_subscribe_recipe` item is printed for
+  you to run or ignore. Enabling one edits your Hermes config; this package
+  does not.
+- **Run a catalog workflow.** A `catalog_run` item is printed for the same
+  reason — it spends model budget, which is your call.
+- **Execute a command a model wrote.** Every argv is derived from the plan's
+  validated monitors. Disagreement with the plan's display text is reported as
+  drift, not obeyed.
+- **Touch a home you did not name.** `--hermes-home` falls back to `$HERMES_HOME`
+  then `~/.hermes`, exactly as Hermes resolves it, and every write goes there.
+- **Delete a cron job it did not create.** Revoke uses the job ids recorded at
+  creation; it never lists your jobs and prefix-matches.
 
 ### (a) Local ingress → adjudication
 
@@ -712,12 +949,30 @@ fill.
 - **`example_market_move.yaml` ships disabled** with a placeholder token. No
   live market token is bound by default; binding one is a deliberate operator
   action.
-- **The adjudication workflow has not been run against a live model.** It
-  validates (`hermes workflow validate` → OK) and compiles and plans under
-  `hermes workflow run --dry-run`, but no run has ever reached an LLM. Its
-  output contract is exercised offline via the fixture in
-  `fixtures/adjudication/`. Until a live run happens, treat the decision quality
-  as unmeasured.
+- **No workflow here has been run against a live model.** Both the generator and
+  the adjudicator validate (`hermes workflow validate` → OK) and compile and
+  plan under `hermes workflow run --dry-run`, but no run has ever reached an
+  LLM. Their output contracts are exercised offline against the fixtures in
+  `fixtures/plans/` and `fixtures/adjudication/`. Until a live morning happens,
+  treat decision quality as unmeasured — and expect the first real run's plan
+  JSON to need a hand-fix or two before `plan validate` accepts it.
+- **A node's declared `spec.output` schema is not enforced by Hermes.** It is
+  stored in the IR and no execution path validates against it (checked against
+  `workflow/verify.py` and `runtime/live.py` here). The plan node declares one
+  as documentation; the real enforcement is `pm-desk plan validate`, after the
+  fact. A plan that fails it cannot be repaired by the workflow — the morning
+  is simply wasted.
+- **DD is one agent, not a fanout.** An agent node's output is the envelope
+  `{text, node, result, ...}` with the model's JSON as a string inside `text`,
+  never parsed. So `over: "{{ dq.output.survivors }}"` raises TemplateError and
+  fails the node, and `condition: "$.decision == 'advance'"` on an edge out of
+  an agent fails closed to "blocked", silently skipping everything downstream.
+  Verified against `workflow/expr.py` on this host. Parallel DD becomes possible
+  if Hermes ever surfaces parsed agent JSON into node output; until then a
+  fanout there would be a workflow that crashes on its first real run.
+- **The provisioner cannot be a workflow node.** Hermes' script registry is
+  frozen at import and holds no `pm_desk.*` callable, so the bridge is the CLI.
+  See [Why steps 5–8 are a CLI bridge](#why-steps-58-are-a-cli-bridge-and-not-a-workflow-node).
 - **Not ready for deployment.** Beyond the unexercised live paths above, there
   is no operator alerting on desk failure, no retention policy for the artifact
   store, and no measurement of paper-vs-live divergence. Run it as a research

@@ -1,0 +1,256 @@
+# PM Desk — the morning generator. THIS is the workflow to run first.
+#
+#   prepare -> seed -> directive -> dq -> dd -> eval -> plan -> paper_gate
+#
+# It turns a deterministic directive seed into ONE artifact: an ExecutionPlan.
+# Joe approves or denies it in Telegram. On approval a deterministic provisioner
+# — `pm-desk provision apply`, no agent — installs the monitors the plan
+# describes as real Hermes cron jobs. That is the whole product loop:
+#
+#   generate -> approve -> provision -> monitor -> notify -> record
+#
+# Everything downstream of the gate is code. Nothing a model wrote is executed.
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS SUPERSEDES
+#
+# `pm-desk-paper-v0.yaml` was a research spine that ended at a bare gate: it
+# could produce an opinion, but nothing could act on it. It is kept for
+# reference and is no longer the product loop.
+#
+# `pm-signal-adjudication-v0.yaml` is not a competitor to this file. It is an
+# optional subroutine a PROVISIONED monitor can hand a fired signal to. Deciding
+# what to watch (here) and deciding whether one observed change matters (there)
+# are different jobs.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS GRAPH IS A STRAIGHT LINE WITH NO `condition:` AND ONE FANOUT
+#
+# Checked against this host's Hermes (v0.19.0, workflow/expr.py):
+#
+#   * An agent node's stored output is the envelope
+#     {text, node, result, effective_model, effective_provider} — the model's
+#     JSON lives inside `text` as a STRING. It is never parsed into the output.
+#   * So `condition: "$.decision == 'advance'"` on an edge out of an agent node
+#     raises TemplateError ("field 'decision' not in upstream output"), which
+#     `_edge_state` fails closed to "blocked" — silently skipping everything
+#     downstream. Verified directly against `eval_condition`.
+#   * Likewise `over: "{{ dq.output.survivors }}"` raises TemplateError and
+#     FAILS the fanout node. Verified against `render`.
+#
+# So conditions and `over:` are used ONLY against values that really are
+# structured: `input.*` and script-node output. `directive` fans out over the
+# seed's directive_cards, which the operator compiled with `pm-desk taxonomy
+# compile` and passed as workflow input — real data, not a model's opinion.
+# `dd` is one agent that reads DQ's survivors out of `{{ dq.output }}` and
+# researches them in turn; a fanout there would have to fan over a model-
+# produced list, which cannot resolve on this host.
+#
+# The cost of the straight line is that a reject_all still runs the cheap
+# tools-empty nodes to the end. That is the intended behaviour: the run always
+# produces a plan artifact, even when the plan is "nothing this morning, and
+# here is why", so the desk has a record of the mornings it declined.
+#
+# ---------------------------------------------------------------------------
+# PAPER ONLY
+#
+# There is no wallet, trading, order-placement or UMA node here and there never
+# will be. The DD node has research tools — web, browser, file reads — and no
+# way to act on anything it finds. The only human gate approves a plan whose
+# schema cannot express live execution.
+# ---------------------------------------------------------------------------
+
+workflow: pm_morning_generator_v0
+name: PM Desk — morning generator (ExecutionPlan + approval gate)
+version: 1
+
+# A shared directory at $HERMES_HOME/workflows/workspaces/pm-desk/, created by
+# Hermes for the nodes below that hold file tools. It is NOT a bind of this
+# package's directory, and `spec.workspace` is override-only — no execution path
+# enforces it as an isolation boundary. See the README section
+# "Workspaces (what the primitive actually is)".
+workspace: pm-desk
+
+# One morning run. The DD node is the only expensive one; the rest are cheap
+# tools-empty judgement calls.
+max_budget_usd: 2.00
+
+defaults:
+  timeout_s: 600
+
+nodes:
+  # Model and provider are deliberately omitted on every agent node so the run
+  # inherits whatever the operator's `hermes` config resolves. Pinning a model
+  # here would silently override Joe's own routing on his own host.
+  - id: prepare
+    kind: agent
+    spec:
+      prompt:
+        library: pm-prepare-context-v1
+      # Read-only local context. No terminal, no browser: building a desk state
+      # is not a research task.
+      tools: [read_file, session_search]
+      max_turns: 4
+      budget_usd: 0.12
+
+  # Directive cards are compiled OUTSIDE this workflow, deterministically:
+  #
+  #   pm-desk taxonomy compile --max-cards 4 --json > /tmp/seed.json
+  #
+  # `echo` is one of the few allowlisted `run:` callables, and carrying the
+  # already-compiled cards through it is what makes them a real list the fanout
+  # below can iterate. The morning's shape is reproducible from
+  # (run date, desk-state hash, nonce) rather than from whatever this file lists.
+  - id: seed
+    kind: script
+    run: workflow.examples.echo
+    idempotent: true
+    input:
+      directive_cards: '{{ input.directive_cards }}'
+      seed: '{{ input.seed }}'
+
+  - id: directive
+    kind: fanout
+    over: '{{ seed.output.echo.directive_cards }}'
+    max_branches: 4
+    branch:
+      kind: agent
+      spec:
+        prompt:
+          library: pm-directive-v1
+          params:
+            template: '{{ branch.card_id }}'
+        # No tools. Turning a card into a research question needs judgement,
+        # not a browser — the browsing happens at DD, once, on survivors.
+        tools: []
+        max_turns: 6
+        budget_usd: 0.15
+
+  - id: dq
+    kind: agent
+    spec:
+      prompt:
+        library: pm-dq-v1
+      tools: []
+      max_turns: 4
+      budget_usd: 0.12
+
+  # The one node that does real research, and the correction this workflow
+  # exists to make. The previous spine gave DD `tools: [read_file]` and no way
+  # to browse, which meant "due diligence" over evidence somebody else had
+  # already collected — fine for adjudicating a known signal, useless for
+  # deciding what the desk should watch next.
+  #
+  # NOTE ON THE GRANT: `spec.tools` is a subset grant over TOOLSET names, not an
+  # ACL. Hermes resolves these names to the minimal covering toolsets and passes
+  # those to the child, so the child may also see sibling tools from `web`,
+  # `browser` and `file` — including write_file. The real boundary is that this
+  # package has no trading, signing or wallet tool for it to reach in the first
+  # place, and `tests/guard.test.ts` keeps it that way.
+  - id: dd
+    kind: agent
+    spec:
+      prompt:
+        library: pm-dd-v1
+      tools:
+        - web_search
+        - web_extract
+        - read_file
+        - browser_navigate
+        - browser_snapshot
+        - browser_click
+        - browser_scroll
+      max_turns: 24
+      budget_usd: 0.60
+
+  - id: eval
+    kind: agent
+    spec:
+      prompt:
+        library: pm-eval-v1
+      # No tools on purpose: this node grades what DD brought back. Letting it
+      # go and find the evidence itself would defeat the check.
+      tools: []
+      max_turns: 6
+      budget_usd: 0.20
+
+  # Emits the ExecutionPlan. `spec.output` below is the declared contract, but
+  # be clear about what it is: Hermes stores it in the IR and NO execution path
+  # validates a node's output against it (checked against workflow/verify.py and
+  # runtime/live.py on this host). The prompt library carries the schema in full,
+  # and the real enforcement is `pm-desk plan validate`, which runs against zod
+  # after the fact.
+  - id: plan
+    kind: agent
+    spec:
+      prompt:
+        library: pm-execution-plan-v1
+      tools: []
+      max_turns: 6
+      budget_usd: 0.30
+      output:
+        type: object
+        required:
+          - version
+          - plan_id
+          - paper_only
+          - created_at
+          - seed
+          - thesis
+          - research_summary
+          - telegram_brief
+          - approval
+          - paper_only_constraints
+        properties:
+          version: { const: 1 }
+          paper_only: { const: true }
+          paper_only_constraints:
+            type: object
+            properties:
+              live_execution_allowed: { const: false }
+              fill_type_if_ledger: { const: SIMULATED_NO_FILL }
+
+  # The only human gate, and it approves a PAPER plan. There is no code path
+  # from an approval here to an order anywhere. After Joe decides, the operator
+  # bridge takes over:
+  #
+  #   pm-desk plan from-run --run-id <id> --out plan.json
+  #   pm-desk plan approve  --file plan.json --run-id <id>
+  #   pm-desk provision dry-run --plan plan.json ...
+  #   pm-desk provision apply   --plan plan.json ... --i-approved-this-plan
+  #
+  # That is a CLI bridge rather than a `run:` node because Hermes' script
+  # registry is frozen at import (workflow/runtime/scripts.py) and contains no
+  # pm_desk callable. Pretending otherwise in this file would ship a workflow
+  # that fails to compile.
+  - id: paper_gate
+    kind: gate
+
+edges:
+  - { from: prepare, to: seed }
+  - { from: seed, to: directive }
+  - { from: directive, to: dq }
+  - { from: dq, to: dd }
+  - { from: dd, to: eval }
+  - { from: eval, to: plan }
+  - { from: plan, to: paper_gate }
+
+gates:
+  paper_gate:
+    id: paper_gate
+    channel: telegram
+    approvers: [joe]
+    dual_control: true
+    on_timeout: shelve
+    timeout_s: 86400
+
+notify:
+  on: [failed, partial, awaiting_gate]
+
+triggers:
+  # Manual for the first live run. Schedule it only once a real morning has been
+  # watched end to end:
+  #   hermes workflow schedule workflows/pm-morning-generator-v0.yaml \
+  #     --cron '0 9 * * *' --input "$(cat /tmp/seed-wrapped.json)"
+  # (print-only by default; add --register to actually create the cron job)
+  - { kind: manual }

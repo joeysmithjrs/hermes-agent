@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "plan_id": "plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628",
+  "paper_only": true,
+  "created_at": "2026-07-31T06:12:00.000Z",
+  "generator_run_id": "wfr_example_morning_run",
+  "seed": {
+    "seed_id": "seed_2026-07-31_a41c9e",
+    "run_date": "2026-07-31",
+    "taxonomy_version": 1,
+    "desk_state_hash": "3b1f9c5e2a7d84061fbe5c3a9d2e70481c6b4f83a90d5e2c7b16f4a83d095e2c"
+  },
+  "thesis": {
+    "title": "Scheduled statistical revision resolves ahead of the market's implied timing",
+    "edge_mechanism": "The releasing agency publishes the second estimate on a pre-announced date at a fixed time on a page whose structure is stable. The desk fingerprints that page every 30 minutes, so it observes the revision at publication rather than when a headline propagates. The edge is availability of a timing gap to a read-only desk, not a claim to know the number.",
+    "market_refs": [
+      {
+        "market_id": "0xexample_market_id",
+        "condition_id": "0xexample_condition_id",
+        "question": "Will the second estimate of Q1 GDP growth be revised below 2.5%?",
+        "outcome": "YES"
+      }
+    ],
+    "horizon": "6 days, to the scheduled release date",
+    "invalidations": [
+      "the agency reschedules or delays the release",
+      "the market rules cite a different vintage or series than the release page publishes",
+      "the page structure changes such that the fingerprint no longer tracks the headline figure"
+    ],
+    "why_not_retail_hopium": "It does not require a view on the economy. It requires only that a scheduled primary-source publication is observable, that the market's resolution criterion names that publication, and that observation is faster than repricing. Each of those is checkable, and the third is the one most likely to be false."
+  },
+  "research_summary": {
+    "source_graph": [
+      {
+        "source": "Bureau of Economic Analysis — GDP release schedule",
+        "authority": "primary",
+        "claim": "The second estimate for the quarter is scheduled for publication on the stated date at 08:30 ET.",
+        "url": "https://www.bea.gov/data/gdp/gross-domestic-product",
+        "observed_at": "2026-07-31"
+      },
+      {
+        "source": "Polymarket market rules text",
+        "authority": "primary",
+        "claim": "Resolution follows the headline real GDP figure in the second estimate as first published.",
+        "observed_at": "2026-07-31"
+      },
+      {
+        "source": "Wire-service preview coverage",
+        "authority": "secondary",
+        "claim": "Consensus expects a modest downward revision.",
+        "observed_at": "2026-07-30"
+      }
+    ],
+    "rules_resolution": "The market resolves on the headline real GDP growth figure as first published in the second estimate. Later revisions do not re-resolve it, which is why the monitor fingerprints the release page rather than a summary article.",
+    "unknowns": [
+      "whether the market's liquidity survives to the release; the desk has no view of resting depth",
+      "how quickly the market has repriced on comparable past releases — no back-test was run"
+    ],
+    "dq_notes": [
+      "passed: the resolution criterion names a specific, scheduled, publicly observable document",
+      "passed: at least one primary source establishes both the schedule and the resolution text"
+    ],
+    "eval_scorecard": {
+      "source_quality": 0.8,
+      "timing_edge": 0.5,
+      "rules_clarity": 0.9,
+      "desk_executability": 0.4
+    }
+  },
+  "monitors": [
+    {
+      "monitor_id": "bea_gdp_second_estimate_change",
+      "kind": "primary_source_change",
+      "priority": "script_first",
+      "spec_inline": {
+        "id": "bea_gdp_second_estimate_change",
+        "kind": "primary_source_change",
+        "severity": "high",
+        "cooldown_s": 1800,
+        "description": "Fires when the fingerprint of the BEA GDP release page changes.",
+        "params": {
+          "source_id": "bea_gdp_release",
+          "max_staleness_s": 7200,
+          "min_diff_chars": 40,
+          "market_refs": [
+            {
+              "token_id": "0xexample_token_id",
+              "market_id": "0xexample_market_id",
+              "outcome": "YES"
+            }
+          ]
+        }
+      },
+      "source_spec_inline": {
+        "id": "bea_gdp_release",
+        "version": 1,
+        "url": "https://www.bea.gov/data/gdp/gross-domestic-product",
+        "allowed_domains": ["www.bea.gov"],
+        "timeout_ms": 20000,
+        "extract": {
+          "text_selector": "main",
+          "fields": { "headline": "h1" }
+        },
+        "fingerprint": "normalized_text_sha256",
+        "description": "BEA GDP release landing page — the document the market's rules name.",
+        "linked_market_ids": ["0xexample_market_id"]
+      },
+      "schedule": "30m",
+      "on_fire": ["notify_telegram", "queue_ingress"],
+      "notes": "Detection is a hash comparison, so no model runs on the quiet path."
+    },
+    {
+      "monitor_id": "gdp_market_repricing",
+      "kind": "market_move",
+      "priority": "script_first",
+      "spec_inline": {
+        "id": "gdp_market_repricing",
+        "kind": "market_move",
+        "severity": "warn",
+        "cooldown_s": 3600,
+        "description": "Fires when the market moves five points in an hour, release or not.",
+        "params": {
+          "token_id": "0xexample_token_id",
+          "market_id": "0xexample_market_id",
+          "outcome": "YES",
+          "abs_move": 0.05,
+          "lookback_s": 3600,
+          "max_staleness_s": 900
+        }
+      },
+      "schedule": "30m",
+      "on_fire": ["notify_telegram", "queue_ingress"],
+      "notes": "A move with no source change is the interesting case: someone knows something the desk does not."
+    },
+    {
+      "monitor_id": "release_vs_market_divergence",
+      "kind": "source_market_divergence",
+      "priority": "agent_reasoning",
+      "spec_inline": {
+        "id": "release_vs_market_divergence",
+        "kind": "source_market_divergence",
+        "severity": "high",
+        "cooldown_s": 7200,
+        "description": "The source changed and the market did not — does the change actually bear on the resolution criterion?",
+        "params": {
+          "source_id": "bea_gdp_release",
+          "market": {
+            "token_id": "0xexample_token_id",
+            "market_id": "0xexample_market_id",
+            "outcome": "YES"
+          },
+          "horizon_s": 604800,
+          "require_active": true,
+          "max_staleness_s": 3600
+        }
+      },
+      "schedule": "1h",
+      "on_fire": ["notify_telegram", "queue_ingress", "optional_adjudicate"],
+      "notes": "The one monitor whose decision needs a model: whether a diff is material to the rules text is a reading question, not a threshold."
+    }
+  ],
+  "hermes_setup": [
+    {
+      "action": "install_prompts",
+      "dry_run_command": "pm-desk hermes install-prompts --hermes-home <HERMES_HOME>",
+      "apply_command": "pm-desk hermes install-prompts --hermes-home <HERMES_HOME> --apply",
+      "idempotency_key": "plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628:install_prompts",
+      "notes": "Needed only because one monitor may hand off to the adjudication workflow."
+    },
+    {
+      "action": "cron_create",
+      "dry_run_command": "hermes cron create 30m --no-agent --script pm-desk-plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628-30m.sh --name pm-desk-plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628-30m --deliver telegram",
+      "apply_command": "hermes cron create 30m --no-agent --script pm-desk-plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628-30m.sh --name pm-desk-plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628-30m --deliver telegram",
+      "idempotency_key": "plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628:cron:30m",
+      "notes": "Sweeps the two script-first monitors. Silent stdout when nothing fires."
+    },
+    {
+      "action": "cron_create",
+      "dry_run_command": "hermes cron create 1h --no-agent --script pm-desk-plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628-1h.sh --name pm-desk-plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628-1h --deliver telegram",
+      "apply_command": "hermes cron create 1h --no-agent --script pm-desk-plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628-1h.sh --name pm-desk-plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628-1h --deliver telegram",
+      "idempotency_key": "plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628:cron:1h",
+      "notes": "Sweeps the divergence monitor, which may hand off for adjudication."
+    },
+    {
+      "action": "webhook_subscribe_recipe",
+      "dry_run_command": "# recipe only — pm-desk does not enable a global Hermes webhook",
+      "apply_command": "# recipe only: point an external notifier at the desk ingress on 127.0.0.1:8787 yourself",
+      "idempotency_key": "plan_9f3c1d0a7b6e4c2f8a15d3e7c9b04628:webhook_recipe",
+      "notes": "Printed, never executed. Enabling a webhook is an edit to the operator's Hermes config, which this package never makes."
+    }
+  ],
+  "telegram_brief": "PAPER ONLY — nothing here can place an order.\n\nThe desk wants to watch a scheduled statistical release and the market that resolves on it. The claim is narrow: the release is published on a pre-announced date on a stable page, so a 30-minute fingerprint sweep sees the revision at publication rather than when a headline spreads. No view is taken on the number itself.\n\nApproving installs three monitors and two cron sweeps. Two monitors are pure code (hash diff, price move) and stay silent unless something fires. The third fires only when the source moved and the market did not, and is the one allowed to spend a model turn deciding whether the diff is material.\n\nThe weakest link is executability: the desk cannot see resting depth, and no back-test of past repricing speed was run. If that matters more than the timing story, deny.",
+  "approval": {
+    "required": true,
+    "dual_control": true,
+    "channel": "telegram",
+    "decision": "pending"
+  },
+  "paper_only_constraints": {
+    "live_execution_allowed": false,
+    "fill_type_if_ledger": "SIMULATED_NO_FILL"
+  }
+}
