@@ -1,6 +1,7 @@
 import { UsageError } from '../../core/errors.js';
 import {
   ADJUDICATION_WORKFLOW_FILE,
+  GENERATOR_WORKFLOW_FILE,
   packageWorkflowPath,
   RESEARCH_WORKFLOW_FILE,
 } from '../../hermes/package-paths.js';
@@ -12,9 +13,12 @@ import { emit, table } from '../output.js';
  * `pm-desk hermes ...` — the small, explicit surface that binds this optional
  * package to a Hermes install. Every subcommand here is read-only or
  * plan-by-default; the only one that writes is `install-prompts --apply`, and
- * it writes exactly five prompt-library files under
+ * it writes the prompt-library files this package ships under
  * `$HERMES_HOME/workflows/prompts/`. Nothing here touches Hermes' config.yaml,
  * enables a webhook, or creates a cron job.
+ *
+ * Creating cron jobs is `pm-desk provision apply`'s job, and only for a plan
+ * Joe approved at a gate.
  */
 export async function hermesCommand(sub: string | undefined, flags: Flags): Promise<number> {
   const json = flags.bool('json');
@@ -62,7 +66,7 @@ export async function hermesCommand(sub: string | undefined, flags: Flags): Prom
             ),
             '',
             'Verify with:',
-            `  hermes workflow validate ${packageWorkflowPath(RESEARCH_WORKFLOW_FILE)}`,
+            `  hermes workflow validate ${packageWorkflowPath(GENERATOR_WORKFLOW_FILE)}`,
           ].join('\n'),
       );
       return 0;
@@ -72,13 +76,18 @@ export async function hermesCommand(sub: string | undefined, flags: Flags): Prom
       flags.rejectUnknown('hermes workflows');
       const rows = [
         {
+          workflow: 'pm_morning_generator_v0',
+          role: 'THE PRODUCT LOOP — morning idea -> ExecutionPlan -> Telegram gate',
+          path: packageWorkflowPath(GENERATOR_WORKFLOW_FILE),
+        },
+        {
           workflow: 'pm_signal_adjudication_v0',
-          role: 'artifact-driven adjudication (one tools-empty agent node)',
+          role: 'optional subroutine: does one fired signal matter? (tools-empty)',
           path: packageWorkflowPath(ADJUDICATION_WORKFLOW_FILE),
         },
         {
           workflow: 'pm_desk_paper_v0',
-          role: 'operator-initiated research spine (needs `hermes install-prompts`)',
+          role: 'superseded by the generator; kept for reference',
           path: packageWorkflowPath(RESEARCH_WORKFLOW_FILE),
         },
       ];

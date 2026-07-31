@@ -29,8 +29,18 @@ export function packagePromptDir(): string {
   return join(packageRoot(), 'workflows', 'prompts');
 }
 
+/**
+ * The morning generator: the product loop's entry point. Emits an
+ * ExecutionPlan and ends at the Telegram approval gate.
+ */
+export const GENERATOR_WORKFLOW_FILE = 'pm-morning-generator-v0.yaml';
+
 /** The adjudication workflow the opt-in Hermes launcher runs by default. */
 export const ADJUDICATION_WORKFLOW_FILE = 'pm-signal-adjudication-v0.yaml';
 
-/** The broad, operator-initiated research spine. */
+/**
+ * The earlier research spine. Superseded by the generator for the product loop
+ * and kept for reference; it ends at a gate with nothing able to act on the
+ * result.
+ */
 export const RESEARCH_WORKFLOW_FILE = 'pm-desk-paper-v0.yaml';

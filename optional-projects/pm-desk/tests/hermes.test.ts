@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ConfigError } from '../src/core/errors.js';
 import {
   ADJUDICATION_WORKFLOW_FILE,
+  GENERATOR_WORKFLOW_FILE,
   packagePromptDir,
   packageRoot,
   packageWorkflowPath,
@@ -107,9 +108,16 @@ describe('Node engine preflight', () => {
   });
 });
 
+/** Every workflow this package ships. */
+const ALL_WORKFLOWS = [
+  GENERATOR_WORKFLOW_FILE,
+  ADJUDICATION_WORKFLOW_FILE,
+  RESEARCH_WORKFLOW_FILE,
+] as const;
+
 describe('packaged asset paths', () => {
-  it('resolves both workflows to absolute paths that exist', () => {
-    for (const file of [ADJUDICATION_WORKFLOW_FILE, RESEARCH_WORKFLOW_FILE]) {
+  it('resolves every workflow to an absolute path that exists', () => {
+    for (const file of ALL_WORKFLOWS) {
       const path = packageWorkflowPath(file);
       expect(isAbsolute(path)).toBe(true);
       expect(existsSync(path)).toBe(true);
@@ -137,21 +145,20 @@ describe('workflow capability boundary', () => {
     expect(specs[0]?.spec).not.toHaveProperty('deny_tools');
   });
 
-  it('no node anywhere in either workflow can reach a terminal, browser or network tool', () => {
+  it('no node in any shipped workflow can reach a terminal, a writer or a sub-agent', () => {
+    // These stay banned everywhere, in every workflow, forever. Research tools
+    // are a separate question (see the next test); these are not research.
     const forbidden = [
       'terminal',
-      'browser_navigate',
-      'browser_click',
-      'browser_type',
-      'web_search',
-      'web_extract',
+      'close_terminal',
       'write_file',
       'patch',
       'delegate_task',
+      'execute_code',
     ];
     const violations: string[] = [];
 
-    for (const file of [ADJUDICATION_WORKFLOW_FILE, RESEARCH_WORKFLOW_FILE]) {
+    for (const file of ALL_WORKFLOWS) {
       for (const { id, spec } of agentSpecs(loadWorkflow(file))) {
         // An agent node without an explicit `tools:` would inherit whatever the
         // parent agent has. Every node must state its grant.
@@ -164,11 +171,74 @@ describe('workflow capability boundary', () => {
     expect(violations).toEqual([]);
   });
 
+  it('research tools are granted to exactly one node: the generator’s DD', () => {
+    // The correction this package's generator exists to make is that DD needs
+    // to browse. The correction must stay narrow: one node, in one workflow.
+    const research = ['web_search', 'web_extract', 'browser_navigate', 'browser_snapshot'];
+    const granted: string[] = [];
+
+    for (const file of ALL_WORKFLOWS) {
+      for (const { id, spec } of agentSpecs(loadWorkflow(file))) {
+        if ((spec.tools ?? []).some((tool) => research.includes(tool)))
+          granted.push(`${file}:${id}`);
+      }
+    }
+    expect(granted).toEqual([`${GENERATOR_WORKFLOW_FILE}:dd`]);
+  });
+
+  it('the generator’s plan and eval nodes judge with no tools at all', () => {
+    const specs = new Map(agentSpecs(loadWorkflow(GENERATOR_WORKFLOW_FILE)).map((s) => [s.id, s]));
+    for (const id of ['eval', 'plan', 'dq']) {
+      expect(specs.get(id)?.spec.tools, `${id} must declare tools: []`).toEqual([]);
+    }
+  });
+
+  it('the generator ends at a dual-control telegram gate', () => {
+    const doc = loadWorkflow(GENERATOR_WORKFLOW_FILE);
+    const gate = doc.nodes.find((n) => n.kind === 'gate');
+    expect(gate?.id).toBe('paper_gate');
+    const raw = readFileSync(packageWorkflowPath(GENERATOR_WORKFLOW_FILE), 'utf8');
+    const parsed = parseYaml(raw) as { gates?: Record<string, Record<string, unknown>> };
+    expect(parsed.gates?.['paper_gate']).toMatchObject({
+      channel: 'telegram',
+      dual_control: true,
+      on_timeout: 'shelve',
+    });
+  });
+
+  it('the generator never conditions an edge on an agent node’s output', () => {
+    // An agent output is the envelope {text, node, result, ...}: the model's
+    // JSON is a string inside `text`, never parsed into the output. So
+    // `$.decision == 'advance'` raises TemplateError, which the driver fails
+    // closed to "blocked" — silently skipping everything downstream. Same for
+    // `over:` against a model-produced list, which fails the node outright.
+    const raw = readFileSync(packageWorkflowPath(GENERATOR_WORKFLOW_FILE), 'utf8');
+    const doc = parseYaml(raw) as {
+      nodes: { id: string; kind: string; over?: string }[];
+      edges: { from: string; to: string; condition?: string }[];
+    };
+    const agentIds = new Set(doc.nodes.filter((n) => n.kind === 'agent').map((n) => n.id));
+
+    for (const edge of doc.edges) {
+      if (edge.condition !== undefined) {
+        expect(
+          agentIds.has(edge.from),
+          `edge ${edge.from}->${edge.to} conditions on an agent`,
+        ).toBe(false);
+      }
+    }
+    for (const node of doc.nodes) {
+      if (node.over === undefined) continue;
+      const head = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(node.over)?.[1];
+      expect(agentIds.has(String(head)), `${node.id} fans out over an agent output`).toBe(false);
+    }
+  });
+
   it('every `library:` a workflow references is shipped in this package', () => {
     const shipped = new Set(shippedPromptNames());
     const referenced: string[] = [];
 
-    for (const file of [ADJUDICATION_WORKFLOW_FILE, RESEARCH_WORKFLOW_FILE]) {
+    for (const file of ALL_WORKFLOWS) {
       for (const { spec } of agentSpecs(loadWorkflow(file))) {
         const prompt = spec.prompt;
         if (prompt && typeof prompt === 'object' && typeof prompt.library === 'string') {
@@ -265,7 +335,10 @@ describe('prompt-library installer', () => {
   });
 
   it('never targets the real ~/.hermes when a home is passed explicitly', () => {
-    const plan = planPromptInstall({ hermesHome: home, env: { HERMES_HOME: '/should/be/ignored' } });
+    const plan = planPromptInstall({
+      hermesHome: home,
+      env: { HERMES_HOME: '/should/be/ignored' },
+    });
     expect(plan.target_dir.startsWith(home)).toBe(true);
   });
 });
@@ -335,7 +408,9 @@ describe('opt-in Hermes launcher', () => {
     };
 
     store.signals.record(ENVELOPE as never, 'test');
-    await new HermesLauncherDispatcher(store, { enabled: true, runner }).dispatch(ENVELOPE as never);
+    await new HermesLauncherDispatcher(store, { enabled: true, runner }).dispatch(
+      ENVELOPE as never,
+    );
     expect(calls[0]).not.toContain('--dry-run');
 
     await new HermesLauncherDispatcher(store, { enabled: true, dryRun: true, runner }).dispatch(
@@ -382,7 +457,11 @@ integration('real Hermes CLI (opt-in)', () => {
   });
 
   it('validates the adjudication workflow with no prompt libraries installed', () => {
-    const result = hermes(['workflow', 'validate', packageWorkflowPath(ADJUDICATION_WORKFLOW_FILE)]);
+    const result = hermes([
+      'workflow',
+      'validate',
+      packageWorkflowPath(ADJUDICATION_WORKFLOW_FILE),
+    ]);
     expect(result.code, result.stderr).toBe(0);
     expect(result.stdout).toContain('pm_signal_adjudication_v0');
   });
@@ -416,5 +495,47 @@ integration('real Hermes CLI (opt-in)', () => {
     expect(result.code, `${result.stdout}${result.stderr}`).toBe(0);
     // --dry-run compiles and plans the ready set; it must never spawn an agent.
     expect(`${result.stdout}`.toLowerCase()).toContain('adjudicate');
+  });
+
+  it('rejects the morning generator until its prompt libraries are installed, then accepts it', () => {
+    const before = hermes(['workflow', 'validate', packageWorkflowPath(GENERATOR_WORKFLOW_FILE)]);
+    expect(before.code).not.toBe(0);
+    expect(`${before.stdout}${before.stderr}`).toContain('PROMPT_LIBRARY');
+
+    applyPromptInstall(planPromptInstall({ hermesHome: home }));
+
+    const after = hermes(['workflow', 'validate', packageWorkflowPath(GENERATOR_WORKFLOW_FILE)]);
+    expect(after.code, `${after.stdout}${after.stderr}`).toBe(0);
+    expect(after.stdout).toContain('pm_morning_generator_v0');
+  });
+
+  it('accepts the generator’s research tool grant — the names really exist on this host', () => {
+    // The failure this guards: `spec.tools` entries are checked against the
+    // live toolset registry (code TOOLS_UNKNOWN), so a plausible-looking but
+    // unregistered name like `browser_extract` fails validation. This is the
+    // only way to know the DD grant is real rather than aspirational.
+    applyPromptInstall(planPromptInstall({ hermesHome: home }));
+    const result = hermes(['workflow', 'validate', packageWorkflowPath(GENERATOR_WORKFLOW_FILE)]);
+    expect(result.code, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).not.toContain('TOOLS_UNKNOWN');
+  });
+
+  it('plans the generator’s first node from a real compiled seed, spawning no agent', () => {
+    applyPromptInstall(planPromptInstall({ hermesHome: home }));
+    const input = JSON.stringify({
+      directive_cards: [{ card_id: 'unfamiliar_eligible_cluster', family_id: 'explore_seed' }],
+      seed: { seed_id: 'seed_integration', run_date: '2026-07-31', taxonomy_version: 1 },
+    });
+    const result = hermes([
+      'workflow',
+      'run',
+      packageWorkflowPath(GENERATOR_WORKFLOW_FILE),
+      '--input',
+      input,
+      '--dry-run',
+    ]);
+    expect(result.code, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain('prepare');
+    expect(result.stdout).toContain('dry_run');
   });
 });
