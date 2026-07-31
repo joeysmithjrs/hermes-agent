@@ -197,6 +197,60 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX idx_annotations_entry ON paper_ledger_annotations(entry_id, id);
     `,
   },
+  {
+    version: 2,
+    name: 'provision_records',
+    up: `
+      -- One row per ExecutionPlan the provisioner has seen. The plan blob is
+      -- stored verbatim so 'what did we actually install' is answerable months
+      -- later without the operator still having the JSON file.
+      CREATE TABLE provision_plans (
+        plan_id           TEXT PRIMARY KEY,
+        plan_json         TEXT NOT NULL,
+        plan_hash         TEXT NOT NULL,
+        status            TEXT NOT NULL
+                          CHECK (status IN ('dry_run','applied','revoked','failed')),
+        approval_decision TEXT NOT NULL,
+        hermes_home       TEXT NOT NULL,
+        desk_home         TEXT NOT NULL,
+        created_at        TEXT NOT NULL,
+        updated_at        TEXT NOT NULL,
+        -- Same structural guard the ledger and signals carry: a provisioned
+        -- plan can never be recorded as anything but paper.
+        paper_only        INTEGER NOT NULL DEFAULT 1 CHECK (paper_only = 1)
+      );
+
+      -- One row per setup action. UNIQUE(plan_id, idempotency_key) is what
+      -- makes a second 'provision apply' a no-op rather than a second cron job.
+      CREATE TABLE provision_actions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id         TEXT NOT NULL REFERENCES provision_plans(plan_id),
+        idempotency_key TEXT NOT NULL,
+        action          TEXT NOT NULL,
+        argv_json       TEXT NOT NULL,
+        status          TEXT NOT NULL
+                        CHECK (status IN ('planned','applied','skipped','failed','revoked','recipe_only')),
+        cron_job_name   TEXT,
+        cron_job_id     TEXT,
+        detail_json     TEXT,
+        applied_at      TEXT,
+        UNIQUE (plan_id, idempotency_key)
+      );
+      CREATE INDEX idx_provision_actions_plan ON provision_actions(plan_id, id);
+
+      -- Every file the provisioner wrote, with its hash, so revoke and status
+      -- can report on artifacts that were later edited by hand.
+      CREATE TABLE provision_artifacts (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id    TEXT NOT NULL REFERENCES provision_plans(plan_id),
+        path       TEXT NOT NULL,
+        sha256     TEXT NOT NULL,
+        kind       TEXT NOT NULL,
+        written_at TEXT NOT NULL,
+        UNIQUE (plan_id, path)
+      );
+    `,
+  },
 ];
 
 export function applyMigrations(db: Database.Database): number {

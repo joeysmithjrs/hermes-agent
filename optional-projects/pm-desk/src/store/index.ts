@@ -7,6 +7,7 @@ import { StoreError } from '../core/errors.js';
 import { ArtifactStore } from './artifacts.js';
 import { applyMigrations } from './migrations.js';
 import { PaperLedgerRepository } from '../ledger/repository.js';
+import { ProvisionRepository } from '../provision/records.js';
 import {
   AdjudicationRepository,
   MarketRepository,
@@ -41,6 +42,7 @@ export interface DeskStore {
   readonly monitorState: MonitorStateRepository;
   readonly adjudications: AdjudicationRepository;
   readonly ledger: PaperLedgerRepository;
+  readonly provision: ProvisionRepository;
   schemaVersion(): number;
   transaction<T>(fn: () => T): T;
   close(): void;
@@ -119,6 +121,7 @@ export function openStore(options: OpenStoreOptions = {}): DeskStore {
     monitorState: new MonitorStateRepository(db),
     adjudications: new AdjudicationRepository(db),
     ledger: new PaperLedgerRepository(db),
+    provision: new ProvisionRepository(db),
     schemaVersion: () => version,
     transaction: <T>(fn: () => T): T => db.transaction(fn)(),
     close: () => db.close(),
