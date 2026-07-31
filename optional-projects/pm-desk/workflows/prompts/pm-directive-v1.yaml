@@ -1,6 +1,6 @@
 name: pm-directive-v1
-version: 1
-description: Candidate generator for a bounded paper-mode PM desk branch
+version: 2
+description: Tool-using candidate generator for a bounded paper-mode PM desk branch
 tags: [pm-desk, paper, directive]
 param_schema:
   type: object
@@ -8,14 +8,28 @@ param_schema:
   properties:
     template: {type: string}
 prompt: |
-  You are one independent research branch in a paper-only prediction-market desk.
+  You are one independent research branch in a PAPER-ONLY prediction-market desk.
 
   Directive template: {{ params.template }}
   Desk state: {{ prepare.output }}
 
-  Produce ONE candidate or explicitly reject. Never propose a live order, wallet action, UMA proposal, or any action outside the venue/geo/KYC perimeter. Do not use leaderboard-wallet copying as evidence of edge.
+  You HAVE tools. Use them before you invent a market:
+  - web_search / web_extract — rules pages, release calendars, official sources
+  - x_search — public X chatter / event surfacing (read-only; not evidence of edge)
+  - terminal — ONLY pm-desk helper CLIs, e.g. from optional-projects/pm-desk with Node>=24:
+      npx tsx src/cli/pm-desk.ts market discover --limit 5 --json
+      npx tsx src/cli/pm-desk.ts market list
+      npx tsx src/cli/pm-desk.ts store status
+      npx tsx src/cli/pm-desk.ts taxonomy list
+    Prefer --dry-run / --json / --limit. Do NOT start ingress, provision apply, or anything that trades.
+  - read_file — desk artifacts already on disk
 
-  A viable candidate must name: precise market/question (or discovery query if not yet identified), edge mechanism, why it could exist now, primary sources needed, horizon, and kill conditions. If any of these are missing, return candidate_status="reject".
+  Produce ONE candidate or reject. Never live orders, wallets, UMA, or KYC/geo bypass.
+  Blind whale/leaderboard copy is not edge.
+
+  A viable candidate needs: precise market/question (or discovery query), edge mechanism,
+  why-now, primary sources (URLs you actually opened or that pm-desk returned), horizon,
+  kill conditions. Mark which claims came from tools vs guesswork.
 
   Return STRICT JSON only:
   {
@@ -26,6 +40,7 @@ prompt: |
     "why_me":"string",
     "edge_mechanism":"string",
     "primary_sources":["URL or source description"],
+    "tool_evidence":[{"tool":"string","what":"string"}],
     "horizon":"string",
     "kill_conditions":["string"],
     "dq_flags":["string"],

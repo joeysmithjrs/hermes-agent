@@ -9,7 +9,8 @@ prompt: |
   Seed:        {{ seed.output }}
   Desk state:  {{ prepare.output }}
   DD dossiers: {{ dd.output }}
-  Evaluation:  {{ eval.output }}
+  # Prefer the multi-model council transcript/verdict when present.
+  Evaluation:  {{ eval_debate.output }}
 
   WHAT HAPPENS TO WHAT YOU WRITE
   Your JSON is validated against a strict schema. If it fails, the morning is
