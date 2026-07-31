@@ -37,7 +37,14 @@ INGRESS (local only, 127.0.0.1)
   ingress outbox                  Inspect queued signals
 
 TAXONOMY
-  taxonomy compile                Deterministic stratified directive seed
+  taxonomy compile                Deterministic directive seed
+                                  --mode mission_x_arena (default): one mission
+                                    across N Polymarket arenas — the morning shape
+                                  --mode stratify_families: one card per family
+                                  --mission <family|card>  force the mission
+                                  --include-explore        spend a slot on exploration
+  taxonomy list                   Every card, family status and mission eligibility
+  taxonomy arenas                 The arena set the fanout samples from
 
 LEDGER (paper only)
   ledger record --adjudication <file>   Record from a validated paper_alert

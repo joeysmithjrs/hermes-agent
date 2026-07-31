@@ -9,12 +9,14 @@ import {
   ALL_CAPABILITIES,
   compileSeed,
   deskStateHash,
+  loadArenas,
   loadTaxonomy,
   type DeskCapability,
 } from '../src/taxonomy/index.js';
 import { openStore, type DeskStore } from '../src/store/index.js';
 
 const TAXONOMY_PATH = join(import.meta.dirname, '..', 'taxonomy', 'cards.yaml');
+const ARENAS_PATH = join(import.meta.dirname, '..', 'taxonomy', 'arenas.yaml');
 
 /** The capability set this desk actually has today. */
 const DESK_CAPABILITIES: DeskCapability[] = [
@@ -255,6 +257,135 @@ describe('deterministic seed compilation', () => {
       compileSeed({ ...baseInput(), capabilities: ['nonsense' as DeskCapability] }),
     ).toThrow(TaxonomyError);
     expect(ALL_CAPABILITIES).toContain('polymarket_public_data');
+  });
+});
+
+describe('mission x arena seed compilation', () => {
+  const baseInput = () => ({
+    taxonomyPath: TAXONOMY_PATH,
+    arenasPath: ARENAS_PATH,
+    runDate: '2026-07-30',
+    deskStateHash: 'a'.repeat(64),
+    capabilities: DESK_CAPABILITIES,
+    maxCards: 3,
+    mode: 'mission_x_arena' as const,
+  });
+
+  it('emits one card per arena, all sharing a single mission', () => {
+    const result = compileSeed(baseInput());
+    expect(result.cards).toHaveLength(3);
+    expect(new Set(result.cards.map((c) => c.mission_card_id)).size).toBe(1);
+    expect(new Set(result.cards.map((c) => c.arena_id)).size).toBe(3);
+    expect(result.mission?.card_id).toBe(result.cards[0]?.mission_card_id);
+    expect(result.arena_ids).toEqual(result.cards.map((c) => c.arena_id));
+  });
+
+  it('gives every card a distinct id and the arena filters it must screen with', () => {
+    const result = compileSeed(baseInput());
+    expect(new Set(result.cards.map((c) => c.card_id)).size).toBe(result.cards.length);
+    for (const card of result.cards) {
+      expect(card.card_id).toBe(`${card.mission_card_id}__${card.arena_id}`);
+      expect(card.arena?.id).toBe(card.arena_id);
+      expect(card.directive).toContain('ARENA SCOPE');
+      expect(card.directive).toContain(card.arena_id!);
+    }
+  });
+
+  it('picks a mission only from mission-eligible families', () => {
+    const eligible = new Set(
+      loadTaxonomy(TAXONOMY_PATH)
+        .families.filter((f) => f.mission_eligible)
+        .map((f) => f.id),
+    );
+    expect(eligible.size).toBeGreaterThan(0);
+    for (const date of ['2026-07-30', '2026-08-01', '2026-08-02', '2026-08-03']) {
+      const result = compileSeed({ ...baseInput(), runDate: date });
+      expect(eligible).toContain(result.mission?.family_id);
+    }
+  });
+
+  it('is reproducible and moves with the run date', () => {
+    const a = compileSeed(baseInput());
+    const b = compileSeed(baseInput());
+    expect(a.selection_hash).toBe(b.selection_hash);
+    expect(a.cards.map((c) => c.card_id)).toEqual(b.cards.map((c) => c.card_id));
+
+    const later = compileSeed({ ...baseInput(), runDate: '2026-09-14' });
+    expect(later.seed).not.toBe(a.seed);
+  });
+
+  it('records the arena set version alongside the taxonomy version', () => {
+    const result = compileSeed(baseInput());
+    expect(result.arenas_version).toBe(loadArenas(ARENAS_PATH).version);
+    expect(result.mode).toBe('mission_x_arena');
+  });
+
+  it('separates the seed from the selection it produced', () => {
+    const result = compileSeed(baseInput());
+    expect(result.selection_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.selection_hash).not.toBe(result.seed);
+  });
+
+  it('honours an operator mission override by family or by card', () => {
+    const byFamily = compileSeed({ ...baseInput(), mission: 'fair_value_research' });
+    expect(byFamily.mission?.family_id).toBe('fair_value_research');
+
+    const byCard = compileSeed({ ...baseInput(), mission: 'schedule_arity_calendar' });
+    expect(byCard.mission?.card_id).toBe('schedule_arity_calendar');
+    expect(byCard.cards.every((c) => c.mission_card_id === 'schedule_arity_calendar')).toBe(true);
+  });
+
+  it('rejects a mission that is not eligible today rather than silently substituting', () => {
+    expect(() => compileSeed({ ...baseInput(), mission: 'no_such_mission' })).toThrow(
+      TaxonomyError,
+    );
+    expect(() =>
+      compileSeed({
+        ...baseInput(),
+        mission: 'official_statistics_release',
+        capabilities: DESK_CAPABILITIES.filter((c) => c !== 'primary_source_collection'),
+      }),
+    ).toThrow(/primary_source_collection/);
+  });
+
+  it('spends one slot on exploration only when asked', () => {
+    const without = compileSeed({ ...baseInput(), maxCards: 3 });
+    expect(without.cards.every((c) => c.arena_id !== undefined)).toBe(true);
+
+    const withExplore = compileSeed({ ...baseInput(), maxCards: 3, includeExplore: true });
+    expect(withExplore.cards.filter((c) => c.arena_id !== undefined)).toHaveLength(2);
+    const extra = withExplore.cards.find((c) => c.arena_id === undefined);
+    expect(extra?.family_id).not.toBe(withExplore.mission?.family_id);
+  });
+
+  it('never asks for more arenas than the arena set has', () => {
+    const arenas = loadArenas(ARENAS_PATH);
+    const result = compileSeed({ ...baseInput(), maxCards: arenas.arenas.length + 5 });
+    expect(result.cards).toHaveLength(arenas.arenas.length);
+    expect(new Set(result.cards.map((c) => c.arena_id)).size).toBe(arenas.arenas.length);
+  });
+
+  it('still emits one arena card when the budget is a single slot', () => {
+    const result = compileSeed({ ...baseInput(), maxCards: 1, includeExplore: true });
+    expect(result.cards.filter((c) => c.arena_id !== undefined)).toHaveLength(1);
+  });
+
+  it('carries the paper-only invariant onto every arena-bound card', () => {
+    for (const card of compileSeed(baseInput()).cards) {
+      expect(card.paper_only).toBe(true);
+      expect(card.prohibits).toContain('live_execution');
+    }
+  });
+
+  it('fails when the taxonomy names no mission-eligible family', () => {
+    const taxonomy = loadTaxonomy(TAXONOMY_PATH);
+    const noMissions = {
+      ...taxonomy,
+      families: taxonomy.families.map((f) => ({ ...f, mission_eligible: false })),
+    };
+    expect(() => compileSeed({ ...baseInput(), taxonomy: noMissions })).toThrow(
+      /mission-eligible/,
+    );
   });
 });
 

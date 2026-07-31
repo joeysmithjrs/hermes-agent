@@ -25,6 +25,9 @@ families:
     status: active
     paper_only: true
     always_reserve_slot: true
+    # The default mission for a mission_x_arena morning: "find fair value in a
+    # mid-cap market" means the same thing in pop culture as it does in macro.
+    mission_eligible: true
     description: >
       Defensible fair value and kill conditions for mid/low-cap markets where
       judgment and structure beat speed. Not a race to first print.
@@ -62,6 +65,7 @@ families:
     title: Post-print / event microstructure
     status: active
     paper_only: true
+    mission_eligible: true
     description: >
       Harvest dislocations after a known public print or market move - fat
       fingers, sticky mids, peer lag. Intensity is event-window, not 24/7 race.
@@ -86,6 +90,7 @@ families:
     title: Intra-Polymarket coherence
     status: active
     paper_only: true
+    mission_eligible: true
     description: >
       Related contracts on Polymarket that should co-move or obey arithmetic or
       narrative consistency - flag stale or inconsistent mids for research.
@@ -107,6 +112,7 @@ families:
     title: Primary-source observation (scheduled / slow preferred)
     status: active
     paper_only: true
+    mission_eligible: true
     description: >
       Authoritative publishers and fingerprintable sources. Prefer scheduled or
       machine-readable feeds. Pure ad-hoc CDN races on thin books are secondary.
@@ -177,6 +183,7 @@ families:
     title: Resolution and oracle research
     status: active
     paper_only: true
+    mission_eligible: true
     # Participation in UMA is a human decision with real economic stakes; the
     # desk researches resolution mechanics and stops there.
     human_only: [uma_propose_dispute]
