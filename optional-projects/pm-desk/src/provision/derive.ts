@@ -342,9 +342,18 @@ function reconcile(
   return { declared_only, drift };
 }
 
-/** Whitespace-insensitive comparison; everything else is a real difference. */
+/**
+ * Whitespace-insensitive, and the leading binary is compared by basename:
+ * `--hermes-bin /opt/hermes-agent/venv/bin/hermes` is the same command as
+ * `hermes`, and reporting that as drift would train an operator to ignore the
+ * warning. Every other token must match exactly.
+ */
 function sameCommand(a: string, b: string): boolean {
-  const norm = (value: string) => value.trim().split(/\s+/).join(' ');
+  const norm = (value: string) => {
+    const tokens = value.trim().split(/\s+/);
+    if (tokens[0]) tokens[0] = tokens[0].slice(tokens[0].lastIndexOf('/') + 1);
+    return tokens.join(' ');
+  };
   return norm(a) === norm(b);
 }
 

@@ -166,6 +166,13 @@ describe('deriveProvision', () => {
     expect(deriveProvision(base()).drift).toEqual([]);
   });
 
+  it('does not call an absolute --hermes-bin drift from the plan’s bare `hermes`', () => {
+    // Reporting that would train an operator to ignore the warning.
+    expect(
+      deriveProvision({ ...base(), hermesBin: '/opt/hermes-agent/venv/bin/hermes' }).drift,
+    ).toEqual([]);
+  });
+
   it('flags a declared setup item with no derived counterpart instead of running it', () => {
     const plan = approvedPlan();
     const extra = parseExecutionPlan({
