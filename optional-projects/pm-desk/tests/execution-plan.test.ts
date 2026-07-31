@@ -307,3 +307,43 @@ describe('executionPlanJsonSchema', () => {
     expect(parseExecutionPlan(JSON.parse(JSON.stringify(plan)))).toEqual(plan);
   });
 });
+
+describe('proposed_buildouts', () => {
+  it('accepts pending Joe-gated build proposals', () => {
+    const plan = validPlan();
+    plan.proposed_buildouts = [
+      {
+        id: 'fr_api_poller',
+        kind: 'datafeed_or_api',
+        title: 'Federal Register JSON poller',
+        problem: 'Need L0 HTTP path without CDN race',
+        proposed_interface: 'pm-desk source collect http adapter for FR documents',
+        validation_plan: 'Fixture FR response then live dry-run',
+        cost_risk_notes: 'Public API, low cost',
+        spawn_recommendation: 'claude_code_pro_after_approval',
+        approval_required: true,
+        decision: 'pending',
+      },
+    ];
+    expect(() => parseExecutionPlan(plan)).not.toThrow();
+  });
+
+  it('rejects buildouts that set approval_required false', () => {
+    const plan = validPlan();
+    plan.proposed_buildouts = [
+      {
+        id: 'bad',
+        kind: 'other',
+        title: 'x',
+        problem: 'p',
+        proposed_interface: 'i',
+        validation_plan: 'v',
+        cost_risk_notes: 'c',
+        spawn_recommendation: 'none',
+        approval_required: false,
+        decision: 'pending',
+      },
+    ];
+    expect(() => parseExecutionPlan(plan)).toThrow();
+  });
+});

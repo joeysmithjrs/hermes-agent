@@ -10,25 +10,112 @@
 #
 # Bump `version` whenever card semantics change, so a recorded seed can be
 # interpreted against the taxonomy that produced it.
+#
+# v2 (2026-07-31): agentic mid/low-cap seams over latency racing. Prefer
+# fair-value, resolution mapping, post-print dislocation, intra-venue
+# coherence, and scheduled (slow) primary sources. Cards may set `weight`
+# (default 1) so the seed compiler up-weights judgment seams.
 
-version: 1
+version: 2
 
 families:
   # ---------------------------------------------------------------------------
-  - id: primary_source_sniper
-    title: Primary-source sniper
+  - id: fair_value_research
+    title: Fair-value research (mid/low-cap)
+    status: active
+    paper_only: true
+    always_reserve_slot: true
+    description: >
+      Defensible fair value and kill conditions for mid/low-cap markets where
+      judgment and structure beat speed. Not a race to first print.
+    cards:
+      - id: fair_value_long_tail
+        title: Fair-value pack for a mid/low-cap market
+        requires: [polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        weight: 3
+        directive: >
+          Pick a live mid/low-cap Polymarket with a roughly tradeable book (not a
+          huge bid-ask hole; not mega-liquidity index beta). Extract rules, name
+          the authentic primary fact, build a defensible fair-value estimate from
+          base rates and comps, and state liquidity-aware edge only if the gap to
+          mid exceeds half-spread plus buffer. Deliver kill conditions and slow
+          monitors (calendar, HTTP source fingerprints) - not a sub-second race.
+        deliverable: >
+          A fair-value note with estimate, method, comps, size-aware edge
+          predicate, kill list, and suggested monitor specs (minutes to days).
+
+      - id: schedule_arity_calendar
+        title: Scheduled resolving events calendar
+        requires: [polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        weight: 2
+        directive: >
+          Map the next 2 to 6 weeks of scheduled events that resolve or heavily
+          reprice open markets the desk can observe (stats prints, court dates,
+          elections, award shows, filing deadlines). Choose one cluster and
+          outline a fair-value prep pack rather than a latency sniper.
+        deliverable: A short calendar plus one fair-value prep target with primary source.
+
+  # ---------------------------------------------------------------------------
+  - id: microstructure_event
+    title: Post-print / event microstructure
     status: active
     paper_only: true
     description: >
-      Watch a named, authoritative publisher and detect the moment its published
-      content changes, before that change is reflected in a linked market. This
-      is the family the current desk is actually built for: deterministic source
-      collection, fingerprint diffing and evidence-backed alerting.
+      Harvest dislocations after a known public print or market move - fat
+      fingers, sticky mids, peer lag. Intensity is event-window, not 24/7 race.
+    cards:
+      - id: post_print_dislocation
+        title: Post-announcement book dislocation
+        requires: [polymarket_public_data, local_evidence_store, paper_ledger]
+        prohibits: [live_execution]
+        weight: 2
+        directive: >
+          Identify a recent or imminent known T0 (release, ruling, official
+          post). Design a 5 to 30 minute post-print protocol: which tokens to
+          snapshot, what counts as fat-finger or inverted book or peer lag, and
+          paper hold/exit rules. Do not propose continuous sub-minute CDN
+          scraping as the whole edge.
+        deliverable: >
+          An event-window monitor pack (market_move and spread_widening rules plus
+          T0 definition) and a paper response sketch.
+
+  # ---------------------------------------------------------------------------
+  - id: intra_poly_coherence
+    title: Intra-Polymarket coherence
+    status: active
+    paper_only: true
+    description: >
+      Related contracts on Polymarket that should co-move or obey arithmetic or
+      narrative consistency - flag stale or inconsistent mids for research.
+    cards:
+      - id: related_market_incoherence
+        title: Related-market probability inconsistency
+        requires: [polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        weight: 2
+        directive: >
+          Find a set of live related Polymarket questions (same entity, nested
+          dates, multipath). Check whether mids are mutually coherent under
+          simple bounds. If not, learn whether rules or liquidity explain the
+          gap before claiming edge.
+        deliverable: A coherence table and either a research thesis or a reject.
+
+  # ---------------------------------------------------------------------------
+  - id: primary_source_sniper
+    title: Primary-source observation (scheduled / slow preferred)
+    status: active
+    paper_only: true
+    description: >
+      Authoritative publishers and fingerprintable sources. Prefer scheduled or
+      machine-readable feeds. Pure ad-hoc CDN races on thin books are secondary.
     cards:
       - id: official_statistics_release
         title: Official statistics release
         requires: [primary_source_collection, polymarket_public_data, local_evidence_store]
         prohibits: [live_execution]
+        weight: 3
         directive: >
           Identify a scheduled statistical release (GDP, CPI, employment) whose
           exact published figure is the resolution criterion of a live market.
@@ -41,6 +128,7 @@ families:
         title: Court docket or opinion
         requires: [primary_source_collection, polymarket_public_data, local_evidence_store]
         prohibits: [live_execution]
+        weight: 2
         directive: >
           Identify a public docket or opinions page that publishes the ruling a
           market resolves on. Establish whether the docket entry or the opinion
@@ -51,6 +139,7 @@ families:
         title: Election authority result
         requires: [primary_source_collection, polymarket_public_data, local_evidence_store]
         prohibits: [live_execution]
+        weight: 2
         directive: >
           Identify the official election authority result page named by a
           market's resolution source. Distinguish provisional from certified
@@ -58,19 +147,25 @@ families:
         deliverable: A SourceSpec plus a provisional-vs-certified mapping.
 
       - id: regulator_agency_notice
-        title: Regulator or agency notice
+        title: Regulator or agency notice (fair value and calendar, not race)
         requires: [primary_source_collection, polymarket_public_data, local_evidence_store]
         prohibits: [live_execution]
+        weight: 1
         directive: >
-          Identify a regulator's notices, orders or register page that publishes
-          the decision a market resolves on. Record the publication cadence and
-          whether notices appear before or after any press release.
-        deliverable: A SourceSpec plus a cadence and precedence note.
+          Identify a regulator notices page or Federal Register API friendly feed
+          that can eventually decide a mid-cap market. Prefer machine feeds and
+          HTML hubs over ad-hoc CDN PDF races. Emphasize fair-value and rules
+          mapping; latency only if book depth justifies it. If the book is a
+          puncture (huge spread, tiny depth), reject as race EV and reframe as
+          slow monitor research only.
+        deliverable: >
+          SourceSpecs and cadence note plus liquidity-aware escalate or reject for race.
 
       - id: corporate_ir_filing
         title: Corporate IR or filing
         requires: [primary_source_collection, polymarket_public_data, local_evidence_store]
         prohibits: [live_execution]
+        weight: 2
         directive: >
           Identify a company's investor-relations or regulatory-filing page that
           publishes the disclosure a market resolves on. Record whether the
@@ -95,6 +190,7 @@ families:
         title: Rules text to resolution-source mapping
         requires: [polymarket_public_data, local_evidence_store]
         prohibits: [live_execution, uma_propose_dispute]
+        weight: 3
         directive: >
           For a live market, extract the rules text and the designated resolution
           source. State precisely what fact, from which publisher, at which
@@ -106,12 +202,61 @@ families:
         title: Resolution source reachability
         requires: [polymarket_public_data, primary_source_collection, local_evidence_store]
         prohibits: [live_execution, uma_propose_dispute]
+        weight: 2
         directive: >
           Check whether a market's designated resolution source is actually
-          machine-observable from this desk: is it a public HTTPS page, is it
-          behind a login or paywall, does it publish on a schedule? Record the
-          answer without attempting to get past any barrier you find.
-        deliverable: A reachability note; if a barrier exists, say so and stop.
+          machine-observable from this desk. Use pm-desk collect for HTML or PDF
+          with an explicit desk home and Browserbase when curl gets 403. Record
+          barriers without bypassing logins or paywalls.
+        deliverable: A reachability note; if a barrier remains after proper tools, stop.
+
+      - id: ambiguity_bounty
+        title: Ambiguity bounty (dual-path residual)
+        requires: [polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution, uma_propose_dispute]
+        weight: 2
+        directive: >
+          Hunt a market whose rules concede dual paths, fuzzy consensus language,
+          or vintage traps. Document whether clarity research is the edge and what
+          a human would need before any UMA action (desk never auto-proposes).
+        deliverable: An ambiguity map with research-only next steps (human UMA gate).
+
+  # ---------------------------------------------------------------------------
+  - id: tool_and_build_proposals
+    title: Tooling and datafeed build proposals
+    status: active
+    paper_only: true
+    description: >
+      Agents should think beyond today's tool grant. Propose code, CLIs, datafeeds,
+      or a bounded Claude Code Pro buildout when that would unlock a testable seam —
+      always as a permission-gated proposal to Joe, never auto-spawned.
+    cards:
+      - id: propose_datafeed_or_api
+        title: Propose a datafeed or API integration
+        requires: [polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        weight: 2
+        directive: >
+          Identify a public datafeed, API, filesystem artifact, or scraper seam
+          that would materially improve fair-value or monitoring for a mid/low-cap
+          market cluster. Write a BuildProposal: problem, proposed interface,
+          cost/risk, validation plan, and whether Claude Code Pro should implement
+          it after Joe approves. Do not implement without approval.
+        deliverable: >
+          A BuildProposal block suitable for ExecutionPlan.proposed_buildouts with
+          approval_required true.
+
+      - id: propose_research_harness
+        title: Propose a research harness or mini-repo
+        requires: [polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        weight: 1
+        directive: >
+          When an idea needs a throwaway backtest, coherence scorer, or one-off
+          collector beyond desk helpers, propose a bounded harness or mini-repo
+          (scope, acceptance tests, estimated effort, Claude Code Pro vs script).
+          Joe must approve before any agent spawn or repo create.
+        deliverable: A BuildProposal with spawn_recommendation none|claude_code_pro_after_approval.
 
   # ---------------------------------------------------------------------------
   - id: semantic_basis
@@ -148,6 +293,7 @@ families:
         title: Public wallet skill attribution
         requires: [polymarket_public_data, local_evidence_store, paper_ledger]
         prohibits: [live_execution, blind_copy_execution]
+        weight: 1
         directive: >
           Using public trade data only, assess whether a wallet's record on a
           market family reflects skill or variance. Separate sizing luck from
@@ -192,17 +338,19 @@ families:
         title: Unfamiliar eligible cluster
         requires: [polymarket_public_data, local_evidence_store]
         prohibits: [live_execution]
+        weight: 2
         directive: >
           Pick a market cluster this desk has NOT recently stored observations or
           sources for, and that is still eligible under current capabilities.
-          Characterise what would have to be true for it to be worth watching,
-          and what primary source would carry that information first.
+          Characterise fair-value research fitness and what primary source would
+          move first - prefer non latency-monopolised names.
         deliverable: A cluster characterisation naming the primary source that moves first.
 
       - id: unobserved_resolution_mechanism
         title: Unobserved resolution mechanism
         requires: [polymarket_public_data, local_evidence_store]
         prohibits: [live_execution]
+        weight: 2
         directive: >
           Find a resolution mechanism the desk has no experience with, and
           document how it differs from the mechanisms already covered.

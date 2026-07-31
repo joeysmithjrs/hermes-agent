@@ -91,6 +91,14 @@ export function renderPlanTelegram(plan: ExecutionPlan): string {
     tail.push('        Webhook items are printed as recipes and are never executed.');
     tail.push('        Enabling one is an edit to your Hermes config, which pm-desk never makes.');
   }
+  if ((plan.proposed_buildouts?.length ?? 0) > 0) {
+    tail.push('');
+    tail.push(`PROPOSED BUILDOUTS (${plan.proposed_buildouts.length}) — NOT auto-installed; Joe must OK each`);
+    for (const b of plan.proposed_buildouts) {
+      tail.push(`        ${b.id} — ${b.kind} · spawn ${b.spawn_recommendation} · ${b.decision}`);
+      tail.push(`          ${truncate(b.title, 160)}`);
+    }
+  }
   tail.push('');
   tail.push(`APPROVAL  dual control via ${plan.approval.channel} · live execution allowed: no`);
   tail.push(
