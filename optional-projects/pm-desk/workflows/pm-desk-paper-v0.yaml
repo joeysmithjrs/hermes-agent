@@ -32,6 +32,11 @@
 workflow: pm_desk_paper_v0
 name: PM Desk — paper research spine
 version: 2
+# A shared, persistent directory at $HERMES_HOME/workflows/workspaces/pm-desk/,
+# created by Hermes and readable by the nodes below that hold `read_file`. It is
+# NOT a bind of this package's directory and NOT a per-node isolation boundary —
+# `spec.workspace` is override-only and no execution path enforces it. See the
+# README section "Workspaces (what the primitive actually is)".
 workspace: pm-desk
 max_budget_usd: 1.20
 

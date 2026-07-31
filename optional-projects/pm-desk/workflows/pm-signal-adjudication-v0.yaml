@@ -42,8 +42,15 @@
 workflow: pm_signal_adjudication_v0
 name: PM Desk — signal adjudication
 version: 1
-workspace: pm-desk
 max_budget_usd: 0.35
+# No `workspace:` here, deliberately. A Hermes workspace is a shared directory
+# under $HERMES_HOME/workflows/workspaces/<name>/ that agent nodes read and
+# write with their ordinary FILE TOOLS. This node has `tools: []`, so it has no
+# file tools and could not open a workspace even if one were pinned — declaring
+# one would only create an empty directory in the operator's Hermes home and
+# imply a binding that does not exist. Note also that a workspace is NOT a bind
+# of the pm-desk source directory; see README "Workspaces (what the primitive
+# actually is)".
 
 defaults:
   timeout_s: 180
