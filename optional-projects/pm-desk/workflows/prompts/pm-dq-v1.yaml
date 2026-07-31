@@ -1,5 +1,5 @@
 name: pm-dq-v1
-version: 4
+version: 5
 description: Default-reject DQ that must actually open markets + primary sources before killing
 tags: [pm-desk, paper, dq]
 prompt: |
@@ -27,6 +27,18 @@ prompt: |
   Default is NO TRADE. At most 3 survivors; empty is fine — **but only after you
   tried the desk's real data plane.** A reject that says "no market data" or
   "PDF blocked" without using the tools below is lazy and wrong.
+
+  ARENA DISCIPLINE
+  On a mission_x_arena morning each branch was bound to one arena and told to
+  reject rather than wander. So:
+  - A branch that rejected honestly inside a thin arena did its job. Do not
+    penalise it relative to a branch that found something easy elsewhere.
+  - A candidate whose arena_id does not match the arena its branch was given,
+    or that reports in_arena false, is a defect: reject it and say so in
+    dq_notes, even if the thesis looks good. It came from a corner of the venue
+    a sibling branch already covered.
+  - Two survivors are not "diverse" because they are in different arenas; they
+    still each need their own verified mechanism.
 
   YOU HAVE TOOLS — USE THEM BEFORE REJECTING ON INFRA:
   1. **Markets (pm-desk helpers via terminal)** — pin THIS morning's store:
@@ -61,7 +73,7 @@ prompt: |
   Return STRICT JSON only (same body as dq.json):
   {
     "decision":"reject_all|advance",
-    "survivors":[{"market_query":"string","thesis":"string","why_me":"string","primary_sources":["string"],"kill_conditions":["string"],"dq_notes":["string"],"checks_run":["string"],"workspace_refs":["string"]}],
+    "survivors":[{"market_query":"string","arena_id":"string","thesis":"string","why_me":"string","primary_sources":["string"],"kill_conditions":["string"],"dq_notes":["string"],"checks_run":["string"],"workspace_refs":["string"]}],
     "rejections":[{"market_query":"string","reason":"string"}],
     "workspace_artifact":"{{ workspace.run_dir }}/dq.json",
     "paper_only":true

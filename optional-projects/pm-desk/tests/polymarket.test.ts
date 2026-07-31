@@ -11,7 +11,7 @@ import { normalizeMarket, toIsoMs } from '../src/polymarket/normalize.js';
 import { PollingMarketFeed, describeRealtimeCapability } from '../src/polymarket/realtime.js';
 import { fetchTokenSnapshot } from '../src/polymarket/snapshot.js';
 import { openStore, type DeskStore } from '../src/store/index.js';
-import { FakePublicClient, rawMarket } from './helpers/fake-polymarket.js';
+import { FakePublicClient, FIXTURE_END_DATE, rawMarket } from './helpers/fake-polymarket.js';
 
 let dir: string;
 let store: DeskStore;
@@ -42,7 +42,7 @@ describe('normalization', () => {
     expect(market.question).toBe('New Rihanna Album before GTA VI?');
     expect(market.active).toBe(true);
     expect(market.closed).toBe(false);
-    expect(market.end_date).toBe('2026-07-31T12:00:00.000Z');
+    expect(market.end_date).toBe(FIXTURE_END_DATE.replace('Z', '.000Z'));
     expect(market.event_title).toBe('What will happen before GTA VI?');
 
     expect(tokens).toHaveLength(2);

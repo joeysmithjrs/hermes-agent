@@ -30,6 +30,23 @@
 # is a different route and should not be used for those nodes.
 # Other nodes use openrouter. Bare terra ids follow local OR convention.
 # ---------------------------------------------------------------------------
+# SEED MODE (Joe 2026-07-31) — mission_x_arena
+#
+# Compile the cards OUTSIDE the workflow, one mission across N arenas:
+#
+#   npx tsx src/cli/pm-desk.ts taxonomy compile \
+#     --mode mission_x_arena --max-cards 3 --json > /tmp/seed.json
+#
+# Every card then carries mission_card_id, arena_id, arena_label and the arena's
+# discover filters, and its directive ends in a hard arena scope block. The
+# fanout below gives each branch one card, so the branches share a method and
+# differ only in where they look - which is the whole point: four unrelated
+# families produced four incomparable notes and a debate with nothing to rank.
+#
+# `--mode stratify_families` (the v2 behaviour, one card per family) is still
+# there for a breadth survey, and `--include-explore` trades one arena slot for
+# an exploration card. Neither is the default morning.
+# ---------------------------------------------------------------------------
 # WHY THE GRAPH IS STILL MOSTLY A STRAIGHT LINE
 #
 # Hermes stores agent output as {text, node, result, ...} with the model JSON
@@ -105,7 +122,7 @@ nodes:
         library: pm-prepare-context-v1
       tools: *context_tools
   # Cards compiled outside the workflow:
-  #   pm-desk taxonomy compile --max-cards 4 --json > /tmp/seed.json
+  #   pm-desk taxonomy compile --mode mission_x_arena --max-cards 3 --json
   - id: seed
     kind: script
     run: workflow.examples.echo
@@ -114,9 +131,14 @@ nodes:
       directive_cards: '{{ input.directive_cards }}'
       seed: '{{ input.seed }}'
 
-  # --- divergent ideation (Grok) — one branch per deterministic card ------
+  # --- one mission, one arena per branch (Grok) ---------------------------
   # Tools: web + X + pm-desk helpers via terminal (discover markets, peek store)
   # + write_file into the shared workspace run_dir.
+  #
+  # The branch prompt reads `{{ branch.directive }}` and `{{ branch.arena_label }}`
+  # off the card itself; `params.template` is only the card id, used for the
+  # artifact filename. Both fields exist on every card in every seed mode, so a
+  # stratify_families seed renders through the same prompt without failing.
   - id: directive
     kind: fanout
     over: '{{ seed.output.echo.directive_cards }}'

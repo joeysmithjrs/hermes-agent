@@ -1,5 +1,5 @@
 name: pm-execution-plan-v1
-version: 2
+version: 3
 description: Emits the ExecutionPlan artifact the Telegram gate approves and the provisioner installs
 tags: [pm-desk, paper, plan, execution-plan]
 prompt: |
@@ -23,6 +23,19 @@ prompt: |
     and a short human blurb to:
       {{ workspace.dir }}/last_plan_summary.json
     ({"plan_id","verdict","monitors_count","created_at","run_id"}).
+
+  YOUR LAST MESSAGE IS THE PLAN — NOT A REPORT ABOUT IT
+  Writing the file is not the same as answering. Hermes validates the text of
+  your final assistant message against the plan schema; if that text is a
+  markdown summary of what you just wrote to disk, validation fails, the
+  approval gate never opens, and Joe sees nothing at all. This has already cost
+  one morning.
+
+  So: after the write_file calls, your final message must be the SAME JSON
+  object, and nothing else. No preamble, no "I've written the plan to...", no
+  bullet summary, no closing remark, no code fence. The first character is `{`
+  and the last is `}`. Everything you want a human to read belongs inside
+  telegram_brief, which is a field of that object.
 
   Seed:        {{ seed.output }}
   Desk state:  {{ prepare.output }}
@@ -138,14 +151,26 @@ prompt: |
   The provisioner NEVER installs these. Joe must OK each one separately after
   the monitor gate. Empty array is fine.
 
-  Return STRICT JSON only - one object, no prose around it:
+  WHEN THE CANDIDATE IS A CODE OR STATISTICAL EXPLOIT
+  Some seams (jump daemons, streaming coherence bounds, post-print state
+  machines, nowcast-to-bucket calibration) are held by a program, not by a
+  model reasoning each morning. If that is what survived, the buildout IS the
+  deliverable: put the real artifact in proposed_buildouts[] with a concrete
+  interface and a validation plan someone could run, and keep monitors to what
+  genuinely fits a declarative kind. Do not dress a daemon up as a narrative
+  thesis to make the plan look fuller, and do not invent a market_move monitor
+  as a stand-in for code you have not written. An empty monitors list with an
+  honest no_monitors_reason and one well-specified buildout is a good morning.
+
+  Return STRICT JSON only - one object, no prose around it, as your entire
+  final message:
   {
     "version": 1,
     "plan_id": "plan_<short stable id derived from the run date, seed and thesis>",
     "paper_only": true,
     "created_at": "UTC ISO-8601 with milliseconds and Z",
     "generator_run_id": "optional hermes run id",
-    "seed": {"seed_id":"string","run_date":"YYYY-MM-DD","taxonomy_version":2,"desk_state_hash":"optional 64 hex"},
+    "seed": {"seed_id":"string","run_date":"YYYY-MM-DD","taxonomy_version":3,"desk_state_hash":"optional 64 hex"},
     "thesis": {
       "title":"string",
       "edge_mechanism":"why the gap is available to THIS read-only paper desk",
