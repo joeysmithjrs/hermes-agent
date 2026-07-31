@@ -5,12 +5,13 @@
   "type": "module",
   "description": "Local-first, paper-only, artifact-driven prediction-market research and alerting desk.",
   "engines": {
-    "node": ">=22"
+    "node": ">=24.0.0"
   },
   "bin": {
     "pm-desk": "./dist/cli/pm-desk.js"
   },
   "scripts": {
+    "preflight": "node scripts/preflight.mjs",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -21,7 +22,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "cli": "tsx src/cli/pm-desk.ts",
-    "verify": "npm run lint && npm run typecheck && npm run test"
+    "verify": "npm run lint && npm run typecheck && npm run test",
+    "check": "npm run preflight && npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
     "@browserbasehq/sdk": "^2.16.0",
@@ -33,14 +35,14 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.1",
+    "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^22.18.12",
-    "eslint": "^9.39.1",
+    "@types/node": "^24.10.1",
+    "eslint": "^10.8.0",
     "prettier": "^3.6.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.46.4",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^3.2.4"
   }
 }
