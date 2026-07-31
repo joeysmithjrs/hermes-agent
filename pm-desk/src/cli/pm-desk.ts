@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+import { isPmDeskError, UsageError } from '../core/errors.js';
+import { Flags, parseArgs } from './args.js';
+import { marketCommand } from './commands/market.js';
+import { storeCommand } from './commands/store.js';
+
+const HELP = `pm-desk — local-first, PAPER-ONLY prediction-market research desk
+
+This tool cannot trade, sign, connect a wallet or place an order. Every command
+reads public data or local artifacts and writes only to the local desk store.
+
+USAGE
+  pm-desk <command> <subcommand> [flags]
+
+STORE
+  store init                      Create/migrate the local evidence store
+  store status                    Row counts per table
+  store export --table <name>     Dump a table as JSON (--limit N)
+
+MARKET DATA (official Polymarket public client, read-only)
+  market discover --limit N       Discover active markets (--dry-run, --json)
+  market snapshot --token <id>    Append a BBO/midpoint observation (repeatable)
+  market list                     List stored open markets
+  market capability               Report realtime/subscription capability
+
+SOURCES (deterministic Browserbase collection)
+  source validate --spec <file>   Validate a SourceSpec without any network use
+  source collect --spec <file>    Collect (--fixture <file>, --dry-run, or --live)
+
+MONITOR (no LLM in this path)
+  monitor evaluate --spec <file>  Evaluate a rule; prints SILENT or a signal
+  monitor list --dir <dir>        List monitor specs
+
+INGRESS (local only, 127.0.0.1)
+  ingress serve                   Start the local signal ingress
+  ingress submit --file <file>    HMAC-sign and POST an envelope (test client)
+  ingress outbox                  Inspect queued signals
+
+TAXONOMY
+  taxonomy compile                Deterministic stratified directive seed
+
+LEDGER (paper only)
+  ledger record --adjudication <file>   Record from a validated paper_alert
+  ledger record --manual ...            Explicit operator entry
+  ledger list | ledger show --entry <id> | ledger export
+  ledger annotate --entry <id>          Add a markout/outcome/note
+  ledger render --entry <id>            Telegram-ready PAPER ONLY alert
+
+WORKFLOW
+  workflow render --signal <id>   Render the adjudication prompt (no LLM call)
+  workflow adjudicate --signal <id> --result <file>   Record a result
+
+GLOBAL FLAGS
+  --home <dir>   Desk home (default $PM_DESK_HOME or ./data)
+  --json         Machine-readable output
+  --help         Show this help
+`;
+
+type Handler = (sub: string | undefined, flags: Flags) => Promise<number>;
+
+async function loadHandler(command: string): Promise<Handler | undefined> {
+  switch (command) {
+    case 'store':
+      return storeCommand;
+    case 'market':
+      return marketCommand;
+    case 'source':
+      return (await import('./commands/source.js')).sourceCommand;
+    case 'monitor':
+      return (await import('./commands/monitor.js')).monitorCommand;
+    case 'ingress':
+      return (await import('./commands/ingress.js')).ingressCommand;
+    case 'ledger':
+      return (await import('./commands/ledger.js')).ledgerCommand;
+    case 'taxonomy':
+      return (await import('./commands/taxonomy.js')).taxonomyCommand;
+    case 'workflow':
+      return (await import('./commands/workflow.js')).workflowCommand;
+    default:
+      return undefined;
+  }
+}
+
+export async function run(argv: readonly string[]): Promise<number> {
+  const parsed = parseArgs(argv);
+  const flags = new Flags(parsed);
+  const [command, sub] = parsed.positionals;
+
+  if (!command || flags.bool('help')) {
+    process.stdout.write(HELP);
+    return command ? 0 : 1;
+  }
+
+  const handler = await loadHandler(command);
+  if (!handler) {
+    throw new UsageError(`unknown command: ${command}`, {
+      hint: 'Run `pm-desk --help` for the command list.',
+    });
+  }
+  return handler(sub, flags);
+}
+
+const isDirectRun =
+  process.argv[1] !== undefined &&
+  (process.argv[1].endsWith('pm-desk.ts') || process.argv[1].endsWith('pm-desk.js'));
+
+if (isDirectRun) {
+  run(process.argv.slice(2))
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((err: unknown) => {
+      if (isPmDeskError(err)) {
+        process.stderr.write(`${err.toCliString()}\n`);
+      } else {
+        process.stderr.write(
+          `UNEXPECTED_ERROR: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        if (process.env.PM_DESK_DEBUG === '1' && err instanceof Error && err.stack) {
+          process.stderr.write(`${err.stack}\n`);
+        }
+      }
+      process.exitCode = 1;
+    });
+}

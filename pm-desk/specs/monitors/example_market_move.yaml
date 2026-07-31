@@ -1,0 +1,37 @@
+# Rule: alert on a material midpoint move over a lookback window.
+#
+# DISABLED BY DEFAULT and bound to a placeholder token. This desk ships with no
+# live market token configured; binding one is a deliberate operator action:
+#
+#   1. pm-desk market discover --limit 10
+#   2. pm-desk store export --table outcome_tokens --limit 10
+#   3. copy the token_id below, set enabled: true
+#   4. pm-desk market snapshot --token <id>   (needs history before it can fire)
+
+id: example_market_move
+version: 1
+kind: market_move
+enabled: false
+severity: warn
+description: >
+  Fires when the YES midpoint moves by an absolute or relative threshold within
+  the lookback window.
+
+cooldown_s: 900
+
+params:
+  # Placeholder. Replace with a real CLOB token id from `market discover`.
+  token_id: REPLACE_WITH_TOKEN_ID
+
+  outcome: YES
+
+  # Fires if EITHER threshold is met.
+  abs_move: 0.05 # five probability points
+  rel_move: 0.25 # or a 25% relative move, which matters at low prices
+
+  # Compare the latest observation against the most recent one at or before
+  # (now - lookback_s).
+  lookback_s: 3600
+
+  # Never compare against an observation this desk has not refreshed recently.
+  max_staleness_s: 900

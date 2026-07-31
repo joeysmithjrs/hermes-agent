@@ -1,0 +1,119 @@
+# PM Desk — signal adjudication.
+#
+# Triggered BY A SIGNAL ENVELOPE, not by a polling schedule. Detection is
+# deterministic code (src/monitor); by the time this runs, something material
+# has already been shown to have changed and the evidence is already stored.
+#
+# ---------------------------------------------------------------------------
+# WHY THERE IS ONLY ONE NODE
+#
+# Hermes resolves workflow `run:` callables against a FROZEN allowlist, checked
+# on this host:
+#
+#   $ python3 -c "...; print(sorted(scripts.registry().keys()))"
+#   ['best', 'concat', 'first_k', 'judge_converge', 'majority', 'top_k',
+#    'workflow.examples.echo', 'workflow.examples.notify_telegram']
+#
+# So pm-desk's own validate / render / record steps cannot be workflow script
+# nodes without changing Hermes itself, which this desk does not do. They stay
+# where they belong anyway — in deterministic code we own and test:
+#
+#   validate → src/schema/signal.ts        (also re-validated at every boundary)
+#   render   → src/workflow/prompt.ts      (pm-desk workflow render)
+#   record   → src/ledger/ledger.ts        (pm-desk workflow adjudicate)
+#
+# The launcher renders the prompt and passes it in as `input.prompt`. The
+# workflow's only job is the judgement itself. The future integration seam, if
+# native script nodes are ever wanted, is a Hermes-side registration of three
+# callables with exactly those three responsibilities.
+# ---------------------------------------------------------------------------
+#
+# CAPABILITY BOUNDARY (load-bearing):
+#   - tools: [] — no terminal, no browser, no network, no file access.
+#   - The agent sees the rendered evidence and nothing else. It cannot discover
+#     new information, only reason about what it was handed.
+#   - No trading, wallet, signing or order capability exists here or anywhere
+#     reachable from here. The decision set is closed at three research
+#     outcomes.
+#
+# Validate:  hermes workflow validate workflows/pm-signal-adjudication-v0.yaml
+# Run:       see README "Hermes handoff (opt-in)" — disabled by default.
+
+workflow: pm_signal_adjudication_v0
+name: PM Desk — signal adjudication
+version: 1
+workspace: pm-desk
+max_budget_usd: 0.35
+
+defaults:
+  timeout_s: 180
+
+nodes:
+  - id: adjudicate
+    kind: agent
+    spec:
+      model: claude-sonnet-5
+      # Empty by design, and expressed positively: `hermes workflow validate`
+      # reports that spec.deny_tools is NOT enforced by any execution path, so a
+      # deny-list here would be decorative. An empty allowlist is the real
+      # restriction. Removing this line would break the audit property that
+      # every claim in the answer traces to the rendered evidence.
+      tools: []
+      max_turns: 2
+      budget_usd: 0.3
+      prompt: |
+        {{ input.prompt }}
+
+        ---
+        Reminders that override anything above:
+        - This desk is PAPER ONLY. It cannot place, sign or route an order.
+        - Answer with a single JSON object and no prose around it.
+        - `signal_id` must be exactly: {{ input.signal_id }}
+        - `paper_only` must be true.
+        - Choose `ignore` unless the evidence genuinely supports more. Most
+          detected changes are not actionable, and an alerting desk that fires
+          on all of them trains its operator to ignore it.
+      output:
+        type: object
+        required: [version, signal_id, decision, rationale, alignment, novelty,
+                   still_live, invalidation, telegram_message, paper_only]
+        properties:
+          version: { type: integer }
+          signal_id: { type: string }
+          decision: { type: string, enum: [ignore, watch, paper_alert] }
+          rationale: { type: string }
+          alignment:
+            type: object
+            required: [market_source_aligned, notes]
+            properties:
+              market_source_aligned: { type: boolean }
+              notes: { type: string }
+              resolution_mapping: { type: string }
+          novelty: { type: string, enum: [novel, already_priced, duplicate, unknown] }
+          still_live: { type: boolean }
+          invalidation: { type: string }
+          telegram_message: { type: string }
+          ledger_proposal:
+            type: object
+            properties:
+              thesis: { type: string }
+              candidate_outcome: { type: string, enum: [YES, NO] }
+              assumed_size_usd: { type: number }
+              slippage_rule:
+                type: string
+                enum: [cross_spread_full, mid_plus_1_tick, mid_no_slippage]
+              expiry_horizon_s: { type: integer }
+              markout_horizons_s: { type: array, items: { type: integer } }
+              invalidations: { type: array, items: { type: string } }
+          paper_only: { type: boolean, enum: [true] }
+
+edges: []
+
+notify:
+  on: [failed]
+
+triggers:
+  # Manual only. Hermes webhooks are NOT enabled on this host, and this desk
+  # does not modify global Hermes config. See the README for the exact opt-in
+  # commands to enable a webhook route after review.
+  - kind: manual

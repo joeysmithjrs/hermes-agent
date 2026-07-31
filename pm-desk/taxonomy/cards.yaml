@@ -1,0 +1,209 @@
+# PM Desk directive taxonomy — versioned.
+#
+# Each card is a bounded research directive, not a strategy and never an
+# instruction to trade. The seed compiler selects a small, stratified, eligible
+# subset per run; a card whose required capability the desk lacks is excluded
+# with a stated reason rather than silently dropped.
+#
+# Every card inherits `live_execution` in its prohibits list. This desk is
+# paper-only and has no code path that could act on a market.
+#
+# Bump `version` whenever card semantics change, so a recorded seed can be
+# interpreted against the taxonomy that produced it.
+
+version: 1
+
+families:
+  # ---------------------------------------------------------------------------
+  - id: primary_source_sniper
+    title: Primary-source sniper
+    status: active
+    paper_only: true
+    description: >
+      Watch a named, authoritative publisher and detect the moment its published
+      content changes, before that change is reflected in a linked market. This
+      is the family the current desk is actually built for: deterministic source
+      collection, fingerprint diffing and evidence-backed alerting.
+    cards:
+      - id: official_statistics_release
+        title: Official statistics release
+        requires: [primary_source_collection, polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        directive: >
+          Identify a scheduled statistical release (GDP, CPI, employment) whose
+          exact published figure is the resolution criterion of a live market.
+          Write a SourceSpec for the release page, confirm the market's rules
+          text maps to that exact statistic and vintage, and record whether the
+          release is scheduled or ad hoc.
+        deliverable: A SourceSpec plus a rules-mapping note stating the exact figure and vintage.
+
+      - id: court_docket_opinion
+        title: Court docket or opinion
+        requires: [primary_source_collection, polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        directive: >
+          Identify a public docket or opinions page that publishes the ruling a
+          market resolves on. Establish whether the docket entry or the opinion
+          text is authoritative for resolution, and how quickly each appears.
+        deliverable: A SourceSpec plus a note on which artifact resolution actually keys on.
+
+      - id: election_authority_result
+        title: Election authority result
+        requires: [primary_source_collection, polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        directive: >
+          Identify the official election authority result page named by a
+          market's resolution source. Distinguish provisional from certified
+          counts and record which one the market's rules text requires.
+        deliverable: A SourceSpec plus a provisional-vs-certified mapping.
+
+      - id: regulator_agency_notice
+        title: Regulator or agency notice
+        requires: [primary_source_collection, polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        directive: >
+          Identify a regulator's notices, orders or register page that publishes
+          the decision a market resolves on. Record the publication cadence and
+          whether notices appear before or after any press release.
+        deliverable: A SourceSpec plus a cadence and precedence note.
+
+      - id: corporate_ir_filing
+        title: Corporate IR or filing
+        requires: [primary_source_collection, polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        directive: >
+          Identify a company's investor-relations or regulatory-filing page that
+          publishes the disclosure a market resolves on. Record whether the
+          filing index or the document itself changes first.
+        deliverable: A SourceSpec plus a first-mover note between index and document.
+
+  # ---------------------------------------------------------------------------
+  - id: resolution_oracle
+    title: Resolution and oracle research
+    status: active
+    paper_only: true
+    # Participation in UMA is a human decision with real economic stakes; the
+    # desk researches resolution mechanics and stops there.
+    human_only: [uma_propose_dispute]
+    description: >
+      Read rules text and designated resolution sources carefully enough to know
+      how a market actually resolves. RESEARCH ONLY — proposing or disputing an
+      UMA assertion is a human action this desk never takes or recommends taking
+      automatically.
+    cards:
+      - id: rules_text_resolution_mapping
+        title: Rules text to resolution-source mapping
+        requires: [polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution, uma_propose_dispute]
+        directive: >
+          For a live market, extract the rules text and the designated resolution
+          source. State precisely what fact, from which publisher, at which
+          vintage, decides the outcome — and list the ambiguities that could
+          produce a contested resolution.
+        deliverable: A rules-mapping note listing the deciding fact and every ambiguity found.
+
+      - id: resolution_source_reachability
+        title: Resolution source reachability
+        requires: [polymarket_public_data, primary_source_collection, local_evidence_store]
+        prohibits: [live_execution, uma_propose_dispute]
+        directive: >
+          Check whether a market's designated resolution source is actually
+          machine-observable from this desk: is it a public HTTPS page, is it
+          behind a login or paywall, does it publish on a schedule? Record the
+          answer without attempting to get past any barrier you find.
+        deliverable: A reachability note; if a barrier exists, say so and stop.
+
+  # ---------------------------------------------------------------------------
+  - id: semantic_basis
+    title: Cross-venue semantic basis
+    status: deferred
+    paper_only: true
+    deferred_reason: >
+      Requires a cross-venue entailment/compliance capability the desk does not
+      have. Comparing two venues' contracts without verifying that their terms
+      actually entail one another produces confident, wrong basis trades.
+    requires_capability_to_activate: cross_venue_entailment
+    cards:
+      - id: cross_venue_contract_entailment
+        title: Cross-venue contract entailment
+        requires: [cross_venue_entailment, polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        directive: >
+          For a pair of contracts on different venues, establish whether one
+          strictly entails the other under all resolution paths, or merely
+          correlates. Only entailment justifies treating the pair as a basis.
+        deliverable: An entailment proof or a rejection with the divergent resolution path.
+
+  # ---------------------------------------------------------------------------
+  - id: wallet_skill
+    title: Wallet skill attribution
+    status: active
+    paper_only: true
+    description: >
+      Study public trader behaviour as evidence about a market, on paper only.
+      Copying a wallet without an independent thesis is prohibited: it inherits
+      someone else's risk, sizing and information without any of their context.
+    cards:
+      - id: public_wallet_skill_attribution
+        title: Public wallet skill attribution
+        requires: [polymarket_public_data, local_evidence_store, paper_ledger]
+        prohibits: [live_execution, blind_copy_execution]
+        directive: >
+          Using public trade data only, assess whether a wallet's record on a
+          market family reflects skill or variance. Separate sizing luck from
+          edge, and state the sample size. Any resulting thesis must stand on its
+          own evidence — never on the fact that a wallet took a position.
+        deliverable: A skill-vs-variance note with sample size, and an independent thesis or none.
+
+  # ---------------------------------------------------------------------------
+  - id: neg_risk_mm
+    title: Negative-risk market making
+    status: deferred
+    paper_only: true
+    deferred_reason: >
+      Deferred until later. Market making needs inventory, quoting and risk
+      machinery that would have to sit outside an LLM path, and none of it is
+      built. It is also the family least compatible with a paper-only desk.
+    requires_capability_to_activate: neg_risk_market_making
+    cards:
+      - id: neg_risk_basket_coherence
+        title: Negative-risk basket coherence
+        requires: [neg_risk_market_making, polymarket_public_data]
+        prohibits: [live_execution]
+        directive: >
+          Measure whether a negative-risk basket's legs sum coherently and how
+          that coherence behaves through news.
+        deliverable: A coherence measurement over time.
+
+  # ---------------------------------------------------------------------------
+  - id: explore_seed
+    title: Exploration seed
+    status: active
+    paper_only: true
+    # Always reserved a slot when budget allows, so the desk keeps sampling
+    # outside whatever it happened to look at yesterday.
+    always_reserve_slot: true
+    description: >
+      Deliberately push attention toward an eligible cluster the desk has not
+      been working. Guards against a research loop that only ever deepens
+      yesterday's thesis.
+    cards:
+      - id: unfamiliar_eligible_cluster
+        title: Unfamiliar eligible cluster
+        requires: [polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        directive: >
+          Pick a market cluster this desk has NOT recently stored observations or
+          sources for, and that is still eligible under current capabilities.
+          Characterise what would have to be true for it to be worth watching,
+          and what primary source would carry that information first.
+        deliverable: A cluster characterisation naming the primary source that moves first.
+
+      - id: unobserved_resolution_mechanism
+        title: Unobserved resolution mechanism
+        requires: [polymarket_public_data, local_evidence_store]
+        prohibits: [live_execution]
+        directive: >
+          Find a resolution mechanism the desk has no experience with, and
+          document how it differs from the mechanisms already covered.
+        deliverable: A mechanism note contrasting it with what the desk already handles.

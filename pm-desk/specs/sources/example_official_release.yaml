@@ -1,0 +1,41 @@
+# Sample SourceSpec — deterministic, code-owned collection recipe.
+#
+# The collector reads ONLY what is declared here. Selectors are never generated,
+# inferred or repaired at runtime: if the page changes shape, collection fails
+# loudly and a human bumps `version`, which keeps the fingerprint history
+# interpretable.
+#
+# This sample points at example.gov (a reserved, non-routable example domain) so
+# it can never be collected live by accident. Run it against the checked-in
+# fixtures:
+#
+#   pm-desk source collect --spec specs/sources/example_official_release.yaml \
+#     --fixture fixtures/sources/example_official_release.v1.html
+
+id: example_official_release
+version: 1
+description: >
+  Official statistics release page. Fingerprints the release body so that a
+  revision to the headline figure is detected as a content change.
+
+url: https://example.gov/release
+allowed_domains:
+  - example.gov
+
+# Selector that must exist before the page counts as loaded.
+wait_for: "main"
+timeout_ms: 20000
+
+extract:
+  # The fingerprint is taken over this element's text and nothing else, so site
+  # chrome (nav, footer, ads, cookie banners) cannot cause a false change.
+  text_selector: "main"
+  fields:
+    title: "h1"
+    published_at: "time"
+
+fingerprint: normalized_text_sha256
+
+# Optional: markets this source is expected to inform. Used by the
+# source_market_divergence rule to check the link is still live.
+linked_market_ids: []
