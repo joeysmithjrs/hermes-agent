@@ -82,20 +82,13 @@ def _model_switch_skew_guard() -> Optional[str]:
     Any first-time lazy import on a stale process is technically exposed; we
     don't guard every import site, only this one.
     """
-    from gateway.code_skew import detect_code_skew
+    from gateway.code_skew import detect_code_skew, skew_help_message
 
     skew = detect_code_skew()
     if not skew:
         return None
     boot_rev, disk_rev = skew
-    return t(
-        "gateway.model.error_prefix",
-        error=(
-            f"This gateway is running code from {boot_rev} but the checkout on "
-            f"disk is now {disk_rev}. Switching models would risk a stale-module "
-            f"crash — restart the gateway to load the new code: hermes gateway restart"
-        ),
-    )
+    return t("gateway.model.error_prefix", error=skew_help_message(boot_rev, disk_rev))
 
 
 class GatewaySlashCommandsMixin:
