@@ -13,10 +13,13 @@ import { IsoTimestampSchema, Sha256HexSchema, SlugSchema, validate } from './com
  *   generator workflow  --emits-->  ExecutionPlan  --approved by Joe-->  provisioner
  *
  * Everything downstream of the gate is deterministic TypeScript reading this
- * object. No agent runs after the approval, so what Joe reads in the Telegram
- * brief is exactly what gets installed: the `hermes_setup` argv strings are
- * printed to him verbatim before he decides, and the provisioner spawns those
- * same argv arrays and nothing else.
+ * object. No agent runs after the approval.
+ *
+ * Note what `hermes_setup[].apply_command` is and is not. It is the string Joe
+ * is shown before he decides. It is NOT executed: the provisioner derives its
+ * own argv from the monitors and spawns that via execFile, and reports any
+ * entry whose declared string disagrees with the derived one as drift. A
+ * command an agent wrote is a thing to display and check, never a thing to run.
  *
  * Two invariants are literals rather than booleans-with-a-default, so a plan
  * that permits live execution cannot be represented in this type at all:
@@ -153,10 +156,10 @@ const PlanMonitorSchema = z
   });
 
 /**
- * The setup actions the provisioner may take. Each carries both commands as
- * literal argv-ish strings so the Telegram brief can show Joe the exact thing
- * that will run — an approval on a summary nobody could check is not dual
- * control, it is a rubber stamp.
+ * The setup actions a plan can ask for. Each carries both commands as literal
+ * strings so the Telegram brief can show Joe the exact thing that will run — an
+ * approval on a summary nobody could check is not dual control, it is a rubber
+ * stamp. The provisioner reads the action and derives the argv itself.
  */
 export const HERMES_SETUP_ACTIONS = [
   'workflow_register',
@@ -239,7 +242,10 @@ export const ExecutionPlanSchema = z
       const keys = value.hermes_setup.map((s) => s.idempotency_key);
       return new Set(keys).size === keys.length;
     },
-    { message: 'hermes_setup idempotency_key must be unique within a plan', path: ['hermes_setup'] },
+    {
+      message: 'hermes_setup idempotency_key must be unique within a plan',
+      path: ['hermes_setup'],
+    },
   );
 
 export type ExecutionPlan = z.infer<typeof ExecutionPlanSchema>;
