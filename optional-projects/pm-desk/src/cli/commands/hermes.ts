@@ -3,6 +3,7 @@ import {
   ADJUDICATION_WORKFLOW_FILE,
   GENERATOR_WORKFLOW_FILE,
   packageWorkflowPath,
+  REOPEN_WORKFLOW_FILE,
   RESEARCH_WORKFLOW_FILE,
 } from '../../hermes/package-paths.js';
 import { applyPromptInstall, planPromptInstall } from '../../hermes/prompts.js';
@@ -79,6 +80,11 @@ export async function hermesCommand(sub: string | undefined, flags: Flags): Prom
           workflow: 'pm_morning_generator_v0',
           role: 'THE PRODUCT LOOP — morning idea -> ExecutionPlan -> Telegram gate',
           path: packageWorkflowPath(GENERATOR_WORKFLOW_FILE),
+        },
+        {
+          workflow: 'pm_thesis_reopen_v0',
+          role: 'reopen a parked thesis after a buildout ships (prior-run context + harness)',
+          path: packageWorkflowPath(REOPEN_WORKFLOW_FILE),
         },
         {
           workflow: 'pm_signal_adjudication_v0',

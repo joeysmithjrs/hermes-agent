@@ -35,6 +35,14 @@ export function packagePromptDir(): string {
  */
 export const GENERATOR_WORKFLOW_FILE = 'pm-morning-generator-v0.yaml';
 
+/**
+ * The thesis reopen: loops back to a parked morning thesis in the same
+ * workspace after a Joe-gated buildout ships (e.g. the CPI harness). Re-decides
+ * one thesis with the tool that was missing the first time. Packed by
+ * `pm-desk thesis reopen`.
+ */
+export const REOPEN_WORKFLOW_FILE = 'pm-thesis-reopen-v0.yaml';
+
 /** The adjudication workflow the opt-in Hermes launcher runs by default. */
 export const ADJUDICATION_WORKFLOW_FILE = 'pm-signal-adjudication-v0.yaml';
 

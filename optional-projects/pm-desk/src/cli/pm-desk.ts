@@ -83,6 +83,12 @@ RESEARCH (paper only; edge detector, never an order)
                                   --live-nowcast 3.42 --bucket 3.4 --as-of YYYY-MM-DD
                                   --json  (live fetch needs PM_DESK_LIVE_CPI=1)
 
+THESIS (loop back after a buildout ships)
+  thesis reopen --prior-run <id> --focus-token <id>
+                                  Pack a prior-run pointer + focus into the
+                                  workspace and print the run command for the
+                                  pm-thesis-reopen-v0 workflow. Paper only.
+
 GLOBAL FLAGS
   --home <dir>   Desk home (default $PM_DESK_HOME or ./data)
   --json         Machine-readable output
@@ -117,6 +123,8 @@ async function loadHandler(command: string): Promise<Handler | undefined> {
       return (await import('./commands/hermes.js')).hermesCommand;
     case 'research':
       return (await import('./commands/research.js')).researchCommand;
+    case 'thesis':
+      return (await import('./commands/thesis.js')).thesisCommand;
     default:
       return undefined;
   }

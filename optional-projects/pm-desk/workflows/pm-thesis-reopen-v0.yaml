@@ -1,0 +1,135 @@
+# PM Desk — thesis reopen (prior-run context + harness).
+#
+# Continues a parked morning thesis in the SAME workspace (pm-desk) after a
+# Joe-gated buildout shipped — most often the CPI nowcast harness. NOT a full
+# morning lottery: one thesis, one focus, re-decided with the tool that was
+# missing the first time.
+#
+#   context → research (must run cpi-calibrate) → plan → paper_gate
+#
+# The plan node reuses the STRICT library prompt pm-execution-plan-v1 (the same
+# one the morning uses), so a reopen cannot freestyle its own schema the way the
+# bespoke host experiment did. The seed/pack the operator passes in is written
+# by `pm-desk thesis reopen --prior-run <id> --focus-token <id>`:
+#
+#   hermes workflow run workflows/pm-thesis-reopen-v0.yaml \
+#     --input "$(cat <workspace>/thesis_reopen_active.json)"
+#
+# To resume a parked run at its gate:
+#   hermes workflow run workflows/pm-thesis-reopen-v0.yaml --resume <run_id>
+#
+# PAPER ONLY — no wallet / order / UMA path exists here.
+
+workflow: pm_thesis_reopen_v0
+name: PM Desk — thesis reopen (prior-run context + harness)
+version: 1
+
+# Shared named workspace under $HERMES_HOME/workflows/workspaces/pm-desk/.
+workspace: pm-desk
+
+defaults:
+  timeout_s: 1200
+
+# Reused tool grants (YAML anchors). The research node gets the same scout
+# surface as the morning so it can re-open markets and primary sources; the
+# plan node is read/write workspace-artifact only.
+x-scout-tools: &scout_tools
+  - web_search
+  - web_extract
+  - x_search
+  - read_file
+  - write_file
+  - terminal
+  - browser_navigate
+  - browser_snapshot
+  - browser_click
+  - browser_scroll
+
+x-context-tools: &context_tools
+  - read_file
+  - write_file
+  - session_search
+
+x-plan-tools: &plan_tools
+  - read_file
+  - write_file
+
+nodes:
+  # --- pack prior-run context (GLM) ---------------------------------------
+  - id: context
+    kind: agent
+    spec:
+      model: z-ai/glm-5.1
+      provider: openrouter
+      prompt:
+        library: pm-reopen-context-v1
+      tools: *context_tools
+
+  # --- run the shipped harness + refresh evidence (Kimi) ------------------
+  # Same tool surface as DQ/DD so this node can re-snapshot the market and
+  # re-open primary sources instead of arguing only from envelope text.
+  - id: research
+    kind: agent
+    spec:
+      model: moonshotai/kimi-k2.5
+      provider: openrouter
+      prompt:
+        library: pm-reopen-research-v1
+      tools: *scout_tools
+
+  # --- package ExecutionPlan (Terra) — critical ---------------------------
+  # Reuses the STRICT morning plan prompt so a reopen emits the same validated
+  # ExecutionPlan shape. No freestyle inline schema. Schema enforcement still
+  # pairs with `pm-desk plan validate --file` (and --strict-brief) after the run.
+  - id: plan
+    kind: agent
+    spec:
+      model: gpt-5.6-terra
+      provider: openrouter
+      prompt:
+        library: pm-execution-plan-v1
+      tools: *plan_tools
+      output:
+        type: object
+        required:
+          - version
+          - plan_id
+          - paper_only
+          - created_at
+          - seed
+          - thesis
+          - research_summary
+          - telegram_brief
+          - approval
+          - paper_only_constraints
+        properties:
+          version: { const: 1 }
+          paper_only: { const: true }
+          paper_only_constraints:
+            type: object
+            properties:
+              live_execution_allowed: { const: false }
+              fill_type_if_ledger: { const: SIMULATED_NO_FILL }
+
+  - id: paper_gate
+    kind: gate
+
+edges:
+  - { from: context, to: research }
+  - { from: research, to: plan }
+  - { from: plan, to: paper_gate }
+
+gates:
+  paper_gate:
+    id: paper_gate
+    channel: telegram
+    approvers: [joe]
+    dual_control: true
+    on_timeout: shelve
+    timeout_s: 86400
+
+notify:
+  on: [failed, partial, awaiting_gate]
+
+triggers:
+  - { kind: manual }
