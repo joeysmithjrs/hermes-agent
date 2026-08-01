@@ -95,7 +95,9 @@ prompt: |
   validated against stored observations, and what would make it not worth
   building. Say so plainly and let the plan carry it as a proposed buildout.
   Padding a daemon-shaped idea with a narrative edge it does not have is the
-  failure mode here.
+  failure mode here. When you flag a buildout, say which approval_class it
+  deserves: auto_agent for public-data/in-repo code the desk should just build,
+  joe_infra for a paid feed or new secret, joe_live_risk for anything live.
 
   SHIPPED TOOLS (already exist — RUN them, never re-propose building them):
     - cpi_nowcast_bucket_harness → `pm-desk research cpi-calibrate`

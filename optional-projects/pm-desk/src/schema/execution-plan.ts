@@ -247,8 +247,16 @@ export const BuildProposalSchema = z
      * implies live size is `joe_live_risk`.
      */
     approval_class: z.enum(APPROVAL_CLASSES).default('joe_infra'),
-    approval_required: z.literal(true),
-    /** pending until Joe greenlights; provisioner ignores these entirely. */
+    /**
+     * Does this buildout need a recorded decision before work starts?
+     *
+     * For `auto_agent` buildouts this is `false`: the agent should just do the
+     * work (or decline) — listing it is a notebook for humans, not a Joe gate.
+     * For `joe_infra` and `joe_live_risk` it is `true`: Joe must OK it. The
+     * provisioner never auto-executes any buildout regardless of this field.
+     */
+    approval_required: z.boolean(),
+    /** pending until Joe greenlights (joe_*) or the agent acts (auto_agent). */
     decision: z.enum(['pending', 'approved', 'denied', 'shelved']).default('pending'),
   })
   .strict()
@@ -256,7 +264,15 @@ export const BuildProposalSchema = z
     message:
       'proposed_buildouts[].id names a tool that has already shipped — run the CLI instead of re-proposing it (see src/research/registry.ts)',
     path: ['id'],
-  });
+  })
+  .refine(
+    (value) => value.approval_class === 'auto_agent' ? !value.approval_required : value.approval_required,
+    {
+      message:
+        'approval_required must be false for auto_agent (agent runs it, no Joe gate) and true for joe_infra / joe_live_risk',
+      path: ['approval_required'],
+    },
+  );
 
 export const ExecutionPlanSchema = z
   .object({

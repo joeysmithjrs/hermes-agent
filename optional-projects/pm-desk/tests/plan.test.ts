@@ -88,6 +88,55 @@ describe('renderPlanTelegram', () => {
     expect(text).toContain('MONITORS TO INSTALL (0)');
     expect(text).toContain('Nothing observable changes');
   });
+
+  it('splits buildouts: joe_* under NEEDS YOUR OK, auto_agent under AGENT SHOULD EXECUTE', () => {
+    const plan = parseExecutionPlan({
+      ...fixturePlan(),
+      proposed_buildouts: [
+        {
+          id: 'paid_datafeed',
+          kind: 'datafeed_or_api',
+          title: 'Paid CPI feed',
+          problem: 'need it',
+          proposed_interface: 'api',
+          validation_plan: 'dry-run',
+          cost_risk_notes: 'costs money',
+          spawn_recommendation: 'none',
+          approval_class: 'joe_infra',
+          approval_required: true,
+          decision: 'pending',
+        },
+        {
+          id: 'loader_fix',
+          kind: 'collector_script',
+          title: 'Fix the Cleveland loader',
+          problem: 'broken',
+          proposed_interface: 'patch',
+          validation_plan: 'tests',
+          cost_risk_notes: 'in-repo code',
+          spawn_recommendation: 'none',
+          approval_class: 'auto_agent',
+          approval_required: false,
+          decision: 'pending',
+        },
+      ],
+    });
+    const text = renderPlanTelegram(plan);
+    // Joe-gated buildout surfaces under the needs-OK header.
+    expect(text).toContain('NEEDS YOUR OK');
+    expect(text).toContain('paid_datafeed');
+    expect(text).toContain('joe_infra');
+    // auto_agent buildout is NOT framed as needing Joe.
+    expect(text).toContain('AGENT SHOULD EXECUTE');
+    expect(text).toContain('loader_fix');
+    // The needs-OK block (up to the AGENT header) carries the joe buildout only.
+    const needsOkBlock = text.slice(
+      text.indexOf('NEEDS YOUR OK'),
+      text.indexOf('AGENT SHOULD EXECUTE'),
+    );
+    expect(needsOkBlock).toContain('paid_datafeed');
+    expect(needsOkBlock).not.toContain('loader_fix');
+  });
 });
 
 describe('renderPlanSummary', () => {

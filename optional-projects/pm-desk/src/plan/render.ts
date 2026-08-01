@@ -92,11 +92,29 @@ export function renderPlanTelegram(plan: ExecutionPlan): string {
     tail.push('        Enabling one is an edit to your Hermes config, which pm-desk never makes.');
   }
   if ((plan.proposed_buildouts?.length ?? 0) > 0) {
-    tail.push('');
-    tail.push(`PROPOSED BUILDOUTS (${plan.proposed_buildouts.length}) — NOT auto-installed; Joe must OK each`);
-    for (const b of plan.proposed_buildouts) {
-      tail.push(`        ${b.id} — ${b.kind} · spawn ${b.spawn_recommendation} · ${b.decision}`);
-      tail.push(`          ${truncate(b.title, 160)}`);
+    // Split by approval_class so Joe's Telegram only surfaces what actually
+    // needs him. auto_agent buildouts (public scrapes, in-repo code, hermetic
+    // harness runs) are work the agent should just do — listing them as "needs
+    // your OK" is what made Joe gate coding that should have been automatic.
+    const joeBuildouts = plan.proposed_buildouts.filter((b) => b.approval_class !== 'auto_agent');
+    const autoBuildouts = plan.proposed_buildouts.filter((b) => b.approval_class === 'auto_agent');
+    if (joeBuildouts.length > 0) {
+      tail.push('');
+      tail.push(`NEEDS YOUR OK — ${joeBuildouts.length} buildout(s) (NOT auto-installed; Joe must OK each)`);
+      for (const b of joeBuildouts) {
+        tail.push(`        ${b.id} — ${b.kind} · ${b.approval_class} · spawn ${b.spawn_recommendation} · ${b.decision}`);
+        tail.push(`          ${truncate(b.title, 160)}`);
+      }
+    }
+    if (autoBuildouts.length > 0) {
+      tail.push('');
+      tail.push(
+        `AGENT SHOULD EXECUTE — ${autoBuildouts.length} buildout(s) (not a Joe blocker; public data / in-repo code)`,
+      );
+      for (const b of autoBuildouts) {
+        tail.push(`        ${b.id} — ${b.kind} · ${b.decision}`);
+        tail.push(`          ${truncate(b.title, 160)}`);
+      }
     }
   }
   tail.push('');

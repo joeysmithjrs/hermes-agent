@@ -145,11 +145,24 @@ prompt: |
   PROPOSED BUILDOUTS (optional, encouraged when tools are the bottleneck)
   You MAY think beyond today's tool grant. If a datafeed, collector, harness,
   mini-repo, or Claude Code Pro task would unlock a testable mid/low-cap seam,
-  put it in proposed_buildouts[]. Every item MUST have approval_required true
-  and decision "pending". spawn_recommendation is either "none" or
+  put it in proposed_buildouts[]. spawn_recommendation is either "none" or
   "claude_code_pro_after_approval" - never imply a spawn already happened.
-  The provisioner NEVER installs these. Joe must OK each one separately after
-  the monitor gate. Empty array is fine.
+  The provisioner NEVER installs these. Empty array is fine.
+
+  APPROVAL CLASS — who must OK each buildout (the renderer splits on this):
+    auto_agent    public scrapes, loader fixes, in-repo code, hermetic harness
+                  runs. The agent should JUST DO THE WORK; listing it is a
+                  notebook for humans, not a Joe gate. Set approval_required
+                  false. Prefer actually running the work over emitting one.
+    joe_infra     paid feed, new secret, webhook enable, always-on cloud $.
+                  Joe must OK. Set approval_required true.
+    joe_live_risk anything implying live size / non-paper execution. Joe must
+                  OK. Set approval_required true.
+  Joe's Telegram shows ONLY joe_* buildouts under "NEEDS YOUR OK"; auto_agent
+  ones appear under "AGENT SHOULD EXECUTE". Default is joe_infra, so a
+  generator that forgets the field still gates Joe rather than silently
+  claiming auto-run rights. Do not Joe-gate coding/scraping that should be
+  free.
 
   SHIPPED TOOLS — DO NOT RE-PROPOSE (schema rejects these ids):
     - cpi_nowcast_bucket_harness → `pm-desk research cpi-calibrate`
@@ -220,7 +233,8 @@ prompt: |
         "validation_plan":"string",
         "cost_risk_notes":"string",
         "spawn_recommendation":"none|claude_code_pro_after_approval",
-        "approval_required":true,
+        "approval_class":"auto_agent|joe_infra|joe_live_risk",
+        "approval_required":"true for joe_infra/joe_live_risk, false for auto_agent",
         "decision":"pending"
       }
     ],
