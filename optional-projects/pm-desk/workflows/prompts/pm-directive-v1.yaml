@@ -63,6 +63,12 @@ prompt: |
   Produce ONE candidate or reject. Never live orders, wallets, UMA, or KYC/geo bypass.
   Blind whale/leaderboard copy is not edge.
 
+  SHIPPED TOOLS (already exist — RUN them, never re-propose building them):
+    - cpi_nowcast_bucket_harness → `pm-desk research cpi-calibrate`
+      For a CPI bracket market this is the missing quantitative step, already
+      built. Run it and cite its numbers; do not emit a candidate whose thesis
+      is "we should build a nowcast calibrator".
+
   A viable candidate needs: precise market/question (or discovery query), edge mechanism,
   why-now, primary sources (URLs you actually opened or that pm-desk returned), horizon,
   kill conditions. Mark which claims came from tools vs guesswork.

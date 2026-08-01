@@ -151,6 +151,14 @@ prompt: |
   The provisioner NEVER installs these. Joe must OK each one separately after
   the monitor gate. Empty array is fine.
 
+  SHIPPED TOOLS — DO NOT RE-PROPOSE (schema rejects these ids):
+    - cpi_nowcast_bucket_harness → `pm-desk research cpi-calibrate`
+      (capability: cpi_nowcast_calibration)
+  If the morning's gap is "we need a CPI nowcast bucket harness", that tool
+  already exists: run the CLI, do not emit a buildout for it. A buildout whose
+  id collides with a shipped tool fails validation, so name buildouts something
+  genuinely new.
+
   WHEN THE CANDIDATE IS A CODE OR STATISTICAL EXPLOIT
   Some seams (jump daemons, streaming coherence bounds, post-print state
   machines, nowcast-to-bucket calibration) are held by a program, not by a

@@ -346,4 +346,23 @@ describe('proposed_buildouts', () => {
     ];
     expect(() => parseExecutionPlan(plan)).toThrow();
   });
+
+  it('rejects a buildout whose id names an already-shipped tool', () => {
+    const plan = validPlan();
+    plan.proposed_buildouts = [
+      {
+        id: 'cpi_nowcast_bucket_harness',
+        kind: 'research_harness',
+        title: 'Build the CPI nowcast harness',
+        problem: 'need bucket calibration',
+        proposed_interface: 'pm-desk research cpi-calibrate',
+        validation_plan: 'fixture then live',
+        cost_risk_notes: 'public data only',
+        spawn_recommendation: 'none',
+        approval_required: true,
+        decision: 'pending',
+      },
+    ];
+    expect(() => parseExecutionPlan(plan)).toThrow(/already shipped/);
+  });
 });

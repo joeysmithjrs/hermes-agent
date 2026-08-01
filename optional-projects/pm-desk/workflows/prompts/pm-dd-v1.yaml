@@ -97,6 +97,14 @@ prompt: |
   Padding a daemon-shaped idea with a narrative edge it does not have is the
   failure mode here.
 
+  SHIPPED TOOLS (already exist — RUN them, never re-propose building them):
+    - cpi_nowcast_bucket_harness → `pm-desk research cpi-calibrate`
+      For any CPI bracket market: run the harness (fixture path for
+      reproducibility, live path with PM_DESK_LIVE_CPI=1 for entry evidence) and
+      cite its p_bucket / residual_rmse / sample_size. A buildout with this id is
+      rejected by the plan schema, so if the gap is "we need a CPI harness" the
+      answer is to run it, not to propose it.
+
   A missing rules path, a missing primary source, or a resolution criterion you
   could not locate is a reject. Unknowns are unknowns; do not infer an edge
   from an absence of evidence.
