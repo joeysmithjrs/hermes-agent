@@ -67,6 +67,7 @@ EXECUTION PLAN (what the morning generator emits and the gate approves)
   plan schema                     JSON Schema for the plan
   plan from-run --run-id <id>     Extract the plan from a Hermes run (--out <f>)
   plan approve --file <f> --run-id <id>   Stamp from Hermes' recorded gate decision
+  plan after-gate --run-id <id>   What approving installed (monitors count + next step)
 
 PROVISION (deterministic; installs what an approved plan describes)
   provision dry-run --plan <f>    Print every file and command, write nothing

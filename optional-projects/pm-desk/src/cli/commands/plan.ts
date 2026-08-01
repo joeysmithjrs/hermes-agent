@@ -142,6 +142,65 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
       return 0;
     }
 
+    case 'after-gate': {
+      // The bridge between "Joe decided in Telegram" and "what actually
+      // installs." Pulls the plan back out of the run, says how many monitors
+      // it carries, and prints the exact provision command — so an operator who
+      // just tapped approve does not have to remember the dry-run/apply flow,
+      // and a plan that installs nothing says so out loud (E3).
+      const runId = flags.required('run-id', 'A Hermes run id whose gate Joe decided.');
+      const nodeId = flags.str('node', DEFAULT_PLAN_NODE_ID)!;
+      const workspace = flags.str('workspace', DEFAULT_WORKSPACE)!;
+      const hermesHome = resolveHermesHome(flags.str('hermes-home'));
+      const deskHome = flags.str('desk-home') ?? flags.str('home');
+      flags.rejectUnknown('plan after-gate');
+
+      const found = planFromRun({ hermesHome, runId, nodeId, workspace });
+      const plan = found.plan;
+      const monitors = plan.monitors.length;
+      const approved = plan.approval.decision === 'approved';
+      const planFile = '<run plan> (save with: pm-desk plan from-run --run-id <id> --out plan.json)';
+
+      const nextCommand =
+        monitors === 0
+          ? 'nothing installs — record only (no_monitors_reason on file).'
+          : approved
+            ? `pm-desk provision apply --plan plan.json --hermes-home ${hermesHome} --desk-home ${deskHome ?? '<desk-home>'} --i-approved-this-plan`
+            : `pm-desk provision dry-run --plan plan.json --hermes-home ${hermesHome} --desk-home ${deskHome ?? '<desk-home>'}`;
+
+      emit(
+        { json },
+        {
+          plan_id: plan.plan_id,
+          run_id: runId,
+          source_path: found.source_path,
+          approval_decision: plan.approval.decision,
+          approved,
+          monitors,
+          hermes_setup: plan.hermes_setup.length,
+          next_command: nextCommand,
+        },
+        () =>
+          [
+            `after-gate — plan ${plan.plan_id} (run ${runId})`,
+            `  read from      ${found.source_path}`,
+            `  approval       ${plan.approval.decision}`,
+            `  monitors       ${monitors}`,
+            `  hermes_setup   ${plan.hermes_setup.length}`,
+            '',
+            monitors === 0
+              ? '  Nothing installs. The plan is recorded; no cron jobs are created.'
+              : approved
+                ? '  Approved — install with:'
+                : '  Not yet approved — dry-run with:',
+            `    ${nextCommand}`,
+            '',
+            `  ${planFile}`,
+          ].join('\n'),
+      );
+      return 0;
+    }
+
     case 'approve': {
       const file = flags.required('file', 'Path to the ExecutionPlan JSON emitted by the run.');
       const runId = flags.required('run-id', 'The Hermes run whose gate Joe decided.');
@@ -184,7 +243,7 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
 
     default:
       throw new UsageError(`unknown \`plan\` subcommand: ${sub ?? '(none)'}`, {
-        hint: 'Try: pm-desk plan validate --file <f> [--strict-brief] | plan show | plan render-telegram | plan schema | plan from-run --run-id <id> | plan approve --file <f> --run-id <id>',
+        hint: 'Try: pm-desk plan validate --file <f> [--strict-brief] | plan show | plan render-telegram | plan schema | plan from-run --run-id <id> | plan approve --file <f> --run-id <id> | plan after-gate --run-id <id>',
       });
   }
 }
