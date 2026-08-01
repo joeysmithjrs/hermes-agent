@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { UsageError } from '../../core/errors.js';
 import { resolveHermesHome } from '../../hermes/prompts.js';
 import { DEFAULT_GATE_ID, readGateSignal, stampApproval } from '../../plan/approval.js';
+import { briefWarning, checkPlanBrief } from '../../plan/brief.js';
 import { DEFAULT_PLAN_NODE_ID, DEFAULT_WORKSPACE, planFromRun } from '../../plan/from-run.js';
 import { renderPlanSummary, renderPlanTelegram } from '../../plan/render.js';
 import {
@@ -27,8 +28,23 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
   switch (sub) {
     case 'validate': {
       const file = flags.required('file', 'Path to an ExecutionPlan JSON file.');
+      const strictBrief = flags.bool('strict-brief');
       flags.rejectUnknown('plan validate');
       const plan = readPlan(file);
+      const brief = checkPlanBrief(plan);
+
+      // --strict-brief is the reopen posture: a brief missing an edge-first
+      // section is a hard failure, not a warning. Without it (the morning
+      // posture) the missing sections are surfaced but the plan still validates.
+      if (strictBrief && !brief.ok) {
+        throw new UsageError(
+          `telegram_brief is missing edge-first section(s): ${brief.missing.join(', ')}`,
+          {
+            hint: 'A reopen brief must carry CLAIM / WHY GAP CAN EXIST / MEASURED / KILLS / IF YOU APPROVE.',
+          },
+        );
+      }
+
       emit(
         { json },
         {
@@ -39,6 +55,9 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
           monitors: plan.monitors.length,
           hermes_setup: plan.hermes_setup.length,
           approval: plan.approval.decision,
+          brief_ok: brief.ok,
+          brief_missing: brief.missing,
+          strict_brief: strictBrief,
         },
         () =>
           [
@@ -48,6 +67,9 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
             `  monitors                ${plan.monitors.length}`,
             `  hermes_setup            ${plan.hermes_setup.length}`,
             `  approval                ${plan.approval.decision}`,
+            brief.ok
+              ? '  brief                  edge-first sections present'
+              : `  brief                  ⚠ missing: ${brief.missing.join(', ')}`,
           ].join('\n'),
       );
       return 0;
@@ -66,7 +88,13 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
       flags.rejectUnknown('plan render-telegram');
       const plan = readPlan(file);
       const text = renderPlanTelegram(plan);
-      emit({ json }, { text, chars: text.length, paper_only: true }, () => text);
+      // Soft warn (stderr) when the brief lacks the edge-first sections, so a
+      // rendered brief that is not decision-ready is flagged without polluting
+      // the Telegram message Joe approves. Hard enforcement lives in `validate
+      // --strict-brief`.
+      const warning = briefWarning(plan);
+      if (warning) process.stderr.write(`${warning}\n`);
+      emit({ json }, { text, chars: text.length, paper_only: true, brief_ok: warning === null }, () => text);
       return 0;
     }
 
@@ -114,6 +142,65 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
       return 0;
     }
 
+    case 'after-gate': {
+      // The bridge between "Joe decided in Telegram" and "what actually
+      // installs." Pulls the plan back out of the run, says how many monitors
+      // it carries, and prints the exact provision command — so an operator who
+      // just tapped approve does not have to remember the dry-run/apply flow,
+      // and a plan that installs nothing says so out loud (E3).
+      const runId = flags.required('run-id', 'A Hermes run id whose gate Joe decided.');
+      const nodeId = flags.str('node', DEFAULT_PLAN_NODE_ID)!;
+      const workspace = flags.str('workspace', DEFAULT_WORKSPACE)!;
+      const hermesHome = resolveHermesHome(flags.str('hermes-home'));
+      const deskHome = flags.str('desk-home') ?? flags.str('home');
+      flags.rejectUnknown('plan after-gate');
+
+      const found = planFromRun({ hermesHome, runId, nodeId, workspace });
+      const plan = found.plan;
+      const monitors = plan.monitors.length;
+      const approved = plan.approval.decision === 'approved';
+      const planFile = '<run plan> (save with: pm-desk plan from-run --run-id <id> --out plan.json)';
+
+      const nextCommand =
+        monitors === 0
+          ? 'nothing installs — record only (no_monitors_reason on file).'
+          : approved
+            ? `pm-desk provision apply --plan plan.json --hermes-home ${hermesHome} --desk-home ${deskHome ?? '<desk-home>'} --i-approved-this-plan`
+            : `pm-desk provision dry-run --plan plan.json --hermes-home ${hermesHome} --desk-home ${deskHome ?? '<desk-home>'}`;
+
+      emit(
+        { json },
+        {
+          plan_id: plan.plan_id,
+          run_id: runId,
+          source_path: found.source_path,
+          approval_decision: plan.approval.decision,
+          approved,
+          monitors,
+          hermes_setup: plan.hermes_setup.length,
+          next_command: nextCommand,
+        },
+        () =>
+          [
+            `after-gate — plan ${plan.plan_id} (run ${runId})`,
+            `  read from      ${found.source_path}`,
+            `  approval       ${plan.approval.decision}`,
+            `  monitors       ${monitors}`,
+            `  hermes_setup   ${plan.hermes_setup.length}`,
+            '',
+            monitors === 0
+              ? '  Nothing installs. The plan is recorded; no cron jobs are created.'
+              : approved
+                ? '  Approved — install with:'
+                : '  Not yet approved — dry-run with:',
+            `    ${nextCommand}`,
+            '',
+            `  ${planFile}`,
+          ].join('\n'),
+      );
+      return 0;
+    }
+
     case 'approve': {
       const file = flags.required('file', 'Path to the ExecutionPlan JSON emitted by the run.');
       const runId = flags.required('run-id', 'The Hermes run whose gate Joe decided.');
@@ -156,7 +243,7 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
 
     default:
       throw new UsageError(`unknown \`plan\` subcommand: ${sub ?? '(none)'}`, {
-        hint: 'Try: pm-desk plan validate --file <f> | plan show | plan render-telegram | plan schema | plan from-run --run-id <id> | plan approve --file <f> --run-id <id>',
+        hint: 'Try: pm-desk plan validate --file <f> [--strict-brief] | plan show | plan render-telegram | plan schema | plan from-run --run-id <id> | plan approve --file <f> --run-id <id> | plan after-gate --run-id <id>',
       });
   }
 }

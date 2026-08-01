@@ -702,6 +702,58 @@ hermes cron list
 npx tsx src/cli/pm-desk.ts provision revoke --plan-id <plan_id> --desk-home "$PM_DESK_HOME"
 ```
 
+#### What did approving install? (`plan after-gate`)
+
+A plan that installs nothing is a normal outcome, and an approval that installs
+several cron jobs is easy to lose track of. `plan after-gate` pulls the plan
+back out of the run and says, in one line, how many monitors it carries and the
+exact command to dry-run or apply — so the step between "Joe tapped approve" and
+"the provisioner ran" is never fumbled:
+
+```bash
+npx tsx src/cli/pm-desk.ts plan after-gate --run-id <run_id> --hermes-home "$HERMES_HOME"
+# monitors 0  → "Nothing installs. The plan is recorded; no cron jobs are created."
+# monitors >0 → prints the provision dry-run / apply command
+```
+
+#### Resuming a parked gate
+
+A run that is `awaiting_gate` is not lost — it is parked until Joe answers (or
+until the gate times out to `shelve`). Resume it in place with the same workflow
+and `--resume`, which continues from the recorded checkpoint rather than
+re-running the expensive research nodes:
+
+```bash
+hermes workflow list                       # find the parked run_id
+hermes workflow run workflows/pm-morning-generator-v0.yaml --resume <run_id>
+# then decide the gate and continue at step 5 above (plan from-run / approve / provision)
+```
+
+#### Reopening a thesis after a buildout ships
+
+A morning thesis is often parked because the quantitative step that would
+decide it did not exist yet. Once that buildout ships (e.g. the CPI nowcast
+harness), loop back and re-decide the one thesis in the same workspace — not a
+whole new morning lottery. `pm-desk thesis reopen` packs a prior-run pointer
+plus a focus market into the workspace and prints the run command:
+
+```bash
+npx tsx src/cli/pm-desk.ts thesis reopen \
+  --prior-run <parked_run_id> --focus-token <token_id> \
+  --bucket 3.4 --mid 0.43 --json
+# writes <workspace>/thesis_reopen_active.json and prints:
+#   hermes workflow run workflows/pm-thesis-reopen-v0.yaml --input "$(cat <pack>)"
+```
+
+The reopen graph is `context → research → plan → paper_gate`. The research node
+**must run the shipped `cpi-calibrate` harness** (live ladder preferred; a
+fixture result is `entry_eligible: false` and research-only) and set its verdict
+from `entry_eligible`. The plan node reuses the **strict** `pm-execution-plan-v1`
+library — the same one the morning uses — so a reopen cannot freestyle its own
+schema. Validate the result with `plan validate --strict-brief` (the reopen
+posture: a brief missing CLAIM / WHY GAP CAN EXIST / MEASURED / KILLS / IF YOU
+APPROVE never reaches the gate).
+
 ### Why steps 5–8 are a CLI bridge and not a workflow node
 
 Hermes resolves a `run:` script node against a registry that is **frozen at

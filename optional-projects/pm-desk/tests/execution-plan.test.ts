@@ -346,4 +346,103 @@ describe('proposed_buildouts', () => {
     ];
     expect(() => parseExecutionPlan(plan)).toThrow();
   });
+
+  it('rejects a buildout whose id names an already-shipped tool', () => {
+    const plan = validPlan();
+    plan.proposed_buildouts = [
+      {
+        id: 'cpi_nowcast_bucket_harness',
+        kind: 'research_harness',
+        title: 'Build the CPI nowcast harness',
+        problem: 'need bucket calibration',
+        proposed_interface: 'pm-desk research cpi-calibrate',
+        validation_plan: 'fixture then live',
+        cost_risk_notes: 'public data only',
+        spawn_recommendation: 'none',
+        approval_required: true,
+        decision: 'pending',
+      },
+    ];
+    expect(() => parseExecutionPlan(plan)).toThrow(/already shipped/);
+  });
+
+  it('defaults approval_class to joe_infra and requires approval_required true', () => {
+    const plan = validPlan();
+    plan.proposed_buildouts = [
+      {
+        id: 'paid_feed',
+        kind: 'datafeed_or_api',
+        title: 'Paid datafeed',
+        problem: 'need it',
+        proposed_interface: 'api',
+        validation_plan: 'dry-run',
+        cost_risk_notes: 'costs money',
+        spawn_recommendation: 'none',
+        approval_required: true,
+        decision: 'pending',
+      },
+    ];
+    const parsed = parseExecutionPlan(plan);
+    expect(parsed.proposed_buildouts[0]?.approval_class).toBe('joe_infra');
+  });
+
+  it('lets auto_agent buildouts opt out of Joe approval', () => {
+    const plan = validPlan();
+    plan.proposed_buildouts = [
+      {
+        id: 'loader_fix',
+        kind: 'collector_script',
+        title: 'Fix the loader',
+        problem: 'broken',
+        proposed_interface: 'patch',
+        validation_plan: 'tests',
+        cost_risk_notes: 'in-repo code',
+        spawn_recommendation: 'none',
+        approval_class: 'auto_agent',
+        approval_required: false,
+        decision: 'pending',
+      },
+    ];
+    expect(parseExecutionPlan(plan).proposed_buildouts[0]?.approval_class).toBe('auto_agent');
+  });
+
+  it('rejects auto_agent buildouts that still claim Joe approval is required', () => {
+    const plan = validPlan();
+    plan.proposed_buildouts = [
+      {
+        id: 'loader_fix',
+        kind: 'collector_script',
+        title: 'Fix the loader',
+        problem: 'broken',
+        proposed_interface: 'patch',
+        validation_plan: 'tests',
+        cost_risk_notes: 'in-repo code',
+        spawn_recommendation: 'none',
+        approval_class: 'auto_agent',
+        approval_required: true,
+        decision: 'pending',
+      },
+    ];
+    expect(() => parseExecutionPlan(plan)).toThrow(/approval_required/);
+  });
+
+  it('rejects joe_infra buildouts that drop approval_required', () => {
+    const plan = validPlan();
+    plan.proposed_buildouts = [
+      {
+        id: 'paid_feed',
+        kind: 'datafeed_or_api',
+        title: 'Paid datafeed',
+        problem: 'need it',
+        proposed_interface: 'api',
+        validation_plan: 'dry-run',
+        cost_risk_notes: 'costs money',
+        spawn_recommendation: 'none',
+        approval_class: 'joe_infra',
+        approval_required: false,
+        decision: 'pending',
+      },
+    ];
+    expect(() => parseExecutionPlan(plan)).toThrow(/approval_required/);
+  });
 });

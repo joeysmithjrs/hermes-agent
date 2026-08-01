@@ -13,6 +13,7 @@ import {
   packagePromptDir,
   packageRoot,
   packageWorkflowPath,
+  REOPEN_WORKFLOW_FILE,
   RESEARCH_WORKFLOW_FILE,
 } from '../src/hermes/package-paths.js';
 import {
@@ -366,6 +367,100 @@ describe('workflow capability boundary', () => {
     const prompt = agentSpecs(doc)[0]?.spec.prompt;
     expect(typeof prompt).toBe('string');
     expect(String(prompt)).toContain('{{ input.prompt }}');
+  });
+});
+
+describe('thesis reopen workflow', () => {
+  // The reopen workflow is NOT in ALL_WORKFLOWS on purpose: the capability-
+  // boundary tests above express the generator's grants (write_file/terminal
+  // only on scout+plan), while the reopen graph grants write_file to its
+  // context/research/plan nodes and terminal to research — the same shape as a
+  // generator scout+plan, just for one thesis. It gets its own boundary check.
+
+  it('is a straight line context -> research -> plan -> paper_gate on the pm-desk workspace', () => {
+    const doc = loadWorkflow(REOPEN_WORKFLOW_FILE);
+    expect(doc.workspace).toBe('pm-desk');
+    const ids = doc.nodes.map((n) => n.id);
+    expect(ids).toEqual(['context', 'research', 'plan', 'paper_gate']);
+    const edges = (parseYaml(readFileSync(packageWorkflowPath(REOPEN_WORKFLOW_FILE), 'utf8')) as {
+      edges: { from: string; to: string }[];
+    }).edges;
+    expect(edges).toEqual([
+      { from: 'context', to: 'research' },
+      { from: 'research', to: 'plan' },
+      { from: 'plan', to: 'paper_gate' },
+    ]);
+  });
+
+  it('the plan node uses a STRICT shipped library — no freestyle reopen schema', () => {
+    // C3: the bespoke host reopen freestyled its own inline schema and the gate
+    // opened on an invalid plan. The productized reopen uses a shipped library
+    // prompt (pm-reopen-plan-v1) that mirrors the morning's strict contract but
+    // references the reopen's nodes — the morning library cannot be reused
+    // verbatim because Hermes validates template node references.
+    const doc = loadWorkflow(REOPEN_WORKFLOW_FILE);
+    const plan = doc.nodes.find((n) => n.id === 'plan');
+    const prompt = plan?.spec?.prompt;
+    expect(prompt && typeof prompt === 'object' && prompt.library).toBe('pm-reopen-plan-v1');
+  });
+
+  it('context and research use the dedicated reopen libraries', () => {
+    const doc = loadWorkflow(REOPEN_WORKFLOW_FILE);
+    const lib = (id: string) => {
+      const node = doc.nodes.find((n) => n.id === id);
+      const p = node?.spec?.prompt;
+      return p && typeof p === 'object' && typeof p.library === 'string' ? p.library : undefined;
+    };
+    expect(lib('context')).toBe('pm-reopen-context-v1');
+    expect(lib('research')).toBe('pm-reopen-research-v1');
+  });
+
+  it('every library the reopen workflow references ships in this package', () => {
+    const shipped = new Set(shippedPromptNames());
+    const referenced: string[] = [];
+    for (const { spec } of agentSpecs(loadWorkflow(REOPEN_WORKFLOW_FILE))) {
+      const prompt = spec.prompt;
+      if (prompt && typeof prompt === 'object' && typeof prompt.library === 'string') {
+        referenced.push(prompt.library);
+      }
+    }
+    expect(referenced).toEqual([
+      'pm-reopen-context-v1',
+      'pm-reopen-research-v1',
+      'pm-reopen-plan-v1',
+    ]);
+    expect(referenced.filter((name) => !shipped.has(name))).toEqual([]);
+  });
+
+  it('grants no shell escape hatch; write_file only on context/research/plan, terminal only on research', () => {
+    const forbidden = ['close_terminal', 'patch', 'delegate_task', 'execute_code'];
+    const violations: string[] = [];
+    for (const { id, spec } of agentSpecs(loadWorkflow(REOPEN_WORKFLOW_FILE))) {
+      expect(Array.isArray(spec.tools), `${id} declares no tools list`).toBe(true);
+      for (const tool of spec.tools ?? []) {
+        if (forbidden.includes(tool)) violations.push(`${id}: ${tool}`);
+      }
+      if ((spec.tools ?? []).includes('write_file')) {
+        if (!['context', 'research', 'plan'].includes(id)) violations.push(`${id}: write_file`);
+      }
+      if ((spec.tools ?? []).includes('terminal')) {
+        if (id !== 'research') violations.push(`${id}: terminal`);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('ends at a dual-control telegram gate', () => {
+    const doc = loadWorkflow(REOPEN_WORKFLOW_FILE);
+    expect(doc.nodes.find((n) => n.kind === 'gate')?.id).toBe('paper_gate');
+    const parsed = parseYaml(readFileSync(packageWorkflowPath(REOPEN_WORKFLOW_FILE), 'utf8')) as {
+      gates?: Record<string, Record<string, unknown>>;
+    };
+    expect(parsed.gates?.['paper_gate']).toMatchObject({
+      channel: 'telegram',
+      dual_control: true,
+      on_timeout: 'shelve',
+    });
   });
 });
 

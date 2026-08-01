@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,7 @@ import { renderPlanSummary, renderPlanTelegram } from '../src/plan/render.js';
 import { parseExecutionPlan, type ExecutionPlan } from '../src/schema/execution-plan.js';
 
 const FIXTURE = join(import.meta.dirname, '..', 'fixtures', 'plans', 'example_execution_plan.json');
+const CLI = join(import.meta.dirname, '..', 'src', 'cli', 'pm-desk.ts');
 
 function fixturePlan(): ExecutionPlan {
   return parseExecutionPlan(JSON.parse(readFileSync(FIXTURE, 'utf8')));
@@ -87,6 +89,55 @@ describe('renderPlanTelegram', () => {
     const text = renderPlanTelegram(empty);
     expect(text).toContain('MONITORS TO INSTALL (0)');
     expect(text).toContain('Nothing observable changes');
+  });
+
+  it('splits buildouts: joe_* under NEEDS YOUR OK, auto_agent under AGENT SHOULD EXECUTE', () => {
+    const plan = parseExecutionPlan({
+      ...fixturePlan(),
+      proposed_buildouts: [
+        {
+          id: 'paid_datafeed',
+          kind: 'datafeed_or_api',
+          title: 'Paid CPI feed',
+          problem: 'need it',
+          proposed_interface: 'api',
+          validation_plan: 'dry-run',
+          cost_risk_notes: 'costs money',
+          spawn_recommendation: 'none',
+          approval_class: 'joe_infra',
+          approval_required: true,
+          decision: 'pending',
+        },
+        {
+          id: 'loader_fix',
+          kind: 'collector_script',
+          title: 'Fix the Cleveland loader',
+          problem: 'broken',
+          proposed_interface: 'patch',
+          validation_plan: 'tests',
+          cost_risk_notes: 'in-repo code',
+          spawn_recommendation: 'none',
+          approval_class: 'auto_agent',
+          approval_required: false,
+          decision: 'pending',
+        },
+      ],
+    });
+    const text = renderPlanTelegram(plan);
+    // Joe-gated buildout surfaces under the needs-OK header.
+    expect(text).toContain('NEEDS YOUR OK');
+    expect(text).toContain('paid_datafeed');
+    expect(text).toContain('joe_infra');
+    // auto_agent buildout is NOT framed as needing Joe.
+    expect(text).toContain('AGENT SHOULD EXECUTE');
+    expect(text).toContain('loader_fix');
+    // The needs-OK block (up to the AGENT header) carries the joe buildout only.
+    const needsOkBlock = text.slice(
+      text.indexOf('NEEDS YOUR OK'),
+      text.indexOf('AGENT SHOULD EXECUTE'),
+    );
+    expect(needsOkBlock).toContain('paid_datafeed');
+    expect(needsOkBlock).not.toContain('loader_fix');
   });
 });
 
@@ -346,5 +397,70 @@ describe('gate-derived approval', () => {
 
   it('points at the exact file when the gate signal is missing', () => {
     expect(() => readGateSignal(home, runId, 'paper_gate')).toThrow(/no gate signal at/);
+  });
+});
+
+describe('plan after-gate (CLI)', () => {
+  let home: string;
+  const runId = 'wfr_after_gate';
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'pm-desk-aftergate-'));
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  function runCli(args: string[]): { status: number; stdout: string; stderr: string } {
+    try {
+      const stdout = execFileSync(process.execPath, ['--import', 'tsx', CLI, ...args], {
+        encoding: 'utf8',
+        env: { ...process.env, HERMES_HOME: home },
+        timeout: 30_000,
+      });
+      return { status: 0, stdout, stderr: '' };
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string; stderr?: string; message?: string };
+      return { status: e.status ?? 1, stdout: e.stdout ?? '', stderr: e.stderr ?? e.message ?? '' };
+    }
+  }
+
+  it('reports the monitors count and the install command for an approved plan', () => {
+    const plan = fixturePlan();
+    // Lay out a run dir with a plan node output the recoverer can read.
+    const nodeDir = join(home, 'workflows', 'runs', runId, 'nodes', 'nr_plan_1');
+    mkdirSync(nodeDir, { recursive: true });
+    writeFileSync(
+      join(nodeDir, 'output.json'),
+      JSON.stringify({ node: 'plan', text: JSON.stringify({ ...plan, approval: { ...plan.approval, decision: 'approved', decided_at: '2026-08-01T07:00:00.000Z' } }) }),
+      'utf8',
+    );
+
+    const out = runCli(['plan', 'after-gate', '--run-id', runId, '--json']);
+    expect(out.status, out.stderr).toBe(0);
+    const payload = JSON.parse(out.stdout) as {
+      plan_id: string;
+      monitors: number;
+      approved: boolean;
+      next_command: string;
+    };
+    expect(payload.plan_id).toBe(plan.plan_id);
+    expect(payload.monitors).toBe(plan.monitors.length);
+    expect(payload.approved).toBe(true);
+    expect(payload.next_command).toContain('provision apply');
+  });
+
+  it('says nothing installs for a plan with no monitors', () => {
+    const plan = fixturePlan();
+    const empty = { ...plan, monitors: [], hermes_setup: [], no_monitors_reason: 'nothing observable yet' };
+    const nodeDir = join(home, 'workflows', 'runs', runId, 'nodes', 'nr_plan_1');
+    mkdirSync(nodeDir, { recursive: true });
+    writeFileSync(join(nodeDir, 'output.json'), JSON.stringify({ node: 'plan', text: JSON.stringify(empty) }), 'utf8');
+
+    const out = runCli(['plan', 'after-gate', '--run-id', runId, '--json']);
+    expect(out.status, out.stderr).toBe(0);
+    const payload = JSON.parse(out.stdout) as { monitors: number; next_command: string };
+    expect(payload.monitors).toBe(0);
+    expect(payload.next_command).toContain('nothing installs');
   });
 });

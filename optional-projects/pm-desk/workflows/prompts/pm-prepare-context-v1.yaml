@@ -38,6 +38,7 @@ prompt: |
     "book_summary":"string",
     "known_path_changers":["string"],
     "infra_state":{"polymarket_public_data":"unknown|available|blocked","browser_fallback":"available|unavailable"},
-    "banned_patterns":["blind whale copy","unverified resolution claim","live trade"],
+    "shipped_research_tools":["cpi_nowcast_bucket_harness"],
+    "banned_patterns":["blind whale copy","unverified resolution claim","live trade","re-propose a shipped tool"],
     "notes":["string"]
   }

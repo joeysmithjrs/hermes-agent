@@ -248,6 +248,89 @@ describe('loaders', () => {
   });
 });
 
+describe('provenance and entry eligibility', () => {
+  const nowcasts: NowcastRow[] = Array.from({ length: 24 }, (_, i) => ({
+    refMonth: `${2023 + Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}`,
+    vintageDate: D('2024-01-15'),
+    nowcast: 3.4,
+  }));
+  const prints: PrintRow[] = nowcasts.map((n, i) => ({
+    refMonth: n.refMonth,
+    releaseDate: D('2024-06-12'),
+    yoy: 3.4 + (i % 3) * 0.1,
+  }));
+  const base = { liveNowcast: 3.42, bucket: 3.4, mid: 0.2, minN: 12 };
+
+  it('defaults to fixture provenance and blocks entry when the caller says nothing', () => {
+    const r = runCalibration(nowcasts, prints, base);
+    expect(r.series_provenance).toBe('fixture');
+    expect(r.entry_eligible).toBe(false);
+    expect(r.entry_block_reason).toContain('fixture');
+  });
+
+  it('leaves the decision label intact but still refuses entry on fixtures', () => {
+    const r = runCalibration(nowcasts, prints, { ...base, seriesProvenance: 'fixture' });
+    // The numbers are allowed to look like an edge; they are just not citable.
+    expect(r.decision).toBe('investigate_long');
+    expect(r.entry_eligible).toBe(false);
+    expect(r.notes.some((n) => n.startsWith('research only:'))).toBe(true);
+  });
+
+  it('blocks mixed provenance unless a human overrides it', () => {
+    const mixed = runCalibration(nowcasts, prints, { ...base, seriesProvenance: 'mixed' });
+    expect(mixed.entry_eligible).toBe(false);
+    expect(mixed.entry_block_reason).toContain('mixed');
+
+    const overridden = runCalibration(nowcasts, prints, {
+      ...base,
+      seriesProvenance: 'mixed',
+      allowMixedEntry: true,
+    });
+    expect(overridden.entry_eligible).toBe(true);
+    expect(overridden.entry_block_reason).toBeNull();
+  });
+
+  it('allows entry on a live run with a real sample', () => {
+    const r = runCalibration(nowcasts, prints, {
+      ...base,
+      seriesProvenance: 'live',
+      sourceUrls: ['https://www.clevelandfed.org/example.json'],
+    });
+    expect(r.entry_eligible).toBe(true);
+    expect(r.source_urls).toEqual(['https://www.clevelandfed.org/example.json']);
+    expect(r.paired_n).toBe(r.sample_size);
+  });
+
+  it('refuses entry on a live run that failed closed', () => {
+    const r = runCalibration(nowcasts.slice(0, 2), prints.slice(0, 2), {
+      ...base,
+      seriesProvenance: 'live',
+    });
+    expect(r.decision).toBe('fail_closed');
+    expect(r.entry_eligible).toBe(false);
+    expect(r.entry_block_reason).toContain('failed closed');
+  });
+
+  it('carries the data-plane attempt log through to the result', () => {
+    const r = runCalibration(nowcasts, prints, {
+      ...base,
+      seriesProvenance: 'live',
+      dataPlaneAttempts: [
+        {
+          source: 'cleveland_nowcast_year_json',
+          url: 'https://example.test/nowcast_year.json',
+          ok: true,
+          status: 200,
+          rows: 154,
+          error: null,
+        },
+      ],
+    });
+    expect(r.data_plane_attempts).toHaveLength(1);
+    expect(r.data_plane_attempts[0]?.rows).toBe(154);
+  });
+});
+
 describe('CLI hermetic path', () => {
   const cli = join(import.meta.dirname, '..', 'src', 'cli', 'pm-desk.ts');
   // Live fetch must be off: drop the opt-in env var entirely so the loader
@@ -301,6 +384,40 @@ describe('CLI hermetic path', () => {
     expect(payload.paper_only).toBe(true);
     expect(typeof payload.p_bucket).toBe('number');
     expect(payload.decision).toBe('investigate_long');
+  });
+
+  it('labels a CSV-only run as fixture and refuses to let it count as entry evidence', () => {
+    const out = runCli([
+      'research',
+      'cpi-calibrate',
+      '--nowcasts',
+      join(FIX, 'nowcasts.csv'),
+      '--prints',
+      join(FIX, 'bls_yoy.csv'),
+      '--as-of',
+      '2026-07-31',
+      '--live-nowcast',
+      '3.42',
+      '--bucket',
+      '3.4',
+      '--mid',
+      '0.43',
+      '--json',
+    ]);
+    expect(out.status, out.stderr).toBe(0);
+    const payload = JSON.parse(out.stdout) as {
+      series_provenance: string;
+      entry_eligible: boolean;
+      entry_block_reason: string | null;
+      paired_n: number;
+      sample_size: number;
+      source_urls: string[];
+    };
+    expect(payload.series_provenance).toBe('fixture');
+    expect(payload.entry_eligible).toBe(false);
+    expect(payload.entry_block_reason).toContain('fixture');
+    expect(payload.paired_n).toBe(payload.sample_size);
+    expect(payload.source_urls).toEqual([]);
   });
 
   it('fails closed on a tiny fixture and reports the reason in JSON', () => {

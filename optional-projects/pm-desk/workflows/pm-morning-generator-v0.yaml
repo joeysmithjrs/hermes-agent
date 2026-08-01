@@ -234,6 +234,13 @@ nodes:
               - reject_all — nothing is monitor-ready this morning
 
             Prefer reject_all when evidence is thin, unverified, or retail-hopium.
+
+            DATA PLANE LAW: a thesis whose entry edge rests on a fixture
+            calibration (entry_eligible false) is not advanceable — kill it. A
+            kill that rests on "no market / PDF unreachable" is not valid unless
+            the council re-ran the data plane (pm-desk discover/snapshot, the
+            shipped cpi-calibrate harness, Browserbase) and the attempt log
+            shows the ladder was actually exhausted.
             Respond with STRICT JSON only:
             {
               "verdict": "advance_one|reject_all",
@@ -330,7 +337,11 @@ nodes:
             Prior rounds: {{ branch.transcript }}
 
             Re-open workspace artifacts and, if needed, live sources before you
-            path-kill. write_file
+            path-kill. A kill resting on "source unreachable" is invalid unless
+            you actually re-ran the data plane (discover/snapshot, the shipped
+            cpi-calibrate harness, Browserbase) and the attempt log shows the
+            ladder was exhausted. A thesis citing a fixture calibration
+            (entry_eligible false) as its edge is an automatic kill. write_file
             {{ workspace.run_dir }}/eval_risk_r{{ branch.round }}.json
 
             End with STRICT JSON:

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { TaxonomyError } from '../core/errors.js';
 import { objectHash, sha256Hex } from '../core/hash.js';
 import { validate } from '../schema/common.js';
+import { shippedResearchCapabilities } from '../research/registry.js';
 import type { DeskStore } from '../store/index.js';
 import { arenaScopeBlock, loadArenas, type Arena, type ArenaSet } from './arenas.js';
 
@@ -42,6 +43,7 @@ export const ALL_CAPABILITIES = [
   'paper_ledger',
   'cross_venue_entailment',
   'neg_risk_market_making',
+  'cpi_nowcast_calibration',
 ] as const;
 
 export type DeskCapability = (typeof ALL_CAPABILITIES)[number];
@@ -608,12 +610,27 @@ export function deskStateHash(store: DeskStore): string {
   return objectHash({ counts, sources });
 }
 
-/** The capabilities this desk actually has, given its configuration. */
+/**
+ * The capabilities this desk actually has, given its configuration.
+ *
+ * Shipped research tools advertise their own capabilities through the registry,
+ * so a harness landing on main immediately counts here — a card that requires
+ * `cpi_nowcast_calibration` is no longer excluded just because nobody remembered
+ * to hand-add it to this list.
+ */
 export function detectCapabilities(): DeskCapability[] {
-  return [
+  const shipped = shippedResearchCapabilities();
+  const caps: DeskCapability[] = [
     'polymarket_public_data',
     'primary_source_collection',
     'local_evidence_store',
     'paper_ledger',
   ];
+  for (const cap of shipped) {
+    if ((ALL_CAPABILITIES as readonly string[]).includes(cap)) {
+      const typed = cap as DeskCapability;
+      if (!caps.includes(typed)) caps.push(typed);
+    }
+  }
+  return caps;
 }

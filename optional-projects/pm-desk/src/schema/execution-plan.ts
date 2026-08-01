@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { objectHash } from '../core/hash.js';
 import { deterministicId } from '../core/ids.js';
+import { BANNED_BUILDOUT_IDS } from '../research/registry.js';
 import { IsoTimestampSchema, Sha256HexSchema, SlugSchema, validate } from './common.js';
 
 /**
@@ -203,6 +204,21 @@ const PaperOnlyConstraintsSchema = z
   .strict();
 
 /**
+ * Who must approve a proposed buildout before anything happens.
+ *
+ *   auto_agent    — public data / in-repo code / local scrape. The agent should
+ *                   just do the work; listing it is a notebook for humans, not
+ *                   a Joe gate. The provisioner still never auto-executes these.
+ *   joe_infra     — paid feed, new secret, webhook enable, always-on cloud $.
+ *   joe_live_risk — anything implying live size / non-paper execution.
+ *
+ * Default is `joe_infra` so a generator that forgets the field still gates Joe
+ * rather than silently claiming auto-run rights.
+ */
+export const APPROVAL_CLASSES = ['auto_agent', 'joe_infra', 'joe_live_risk'] as const;
+export type ApprovalClass = (typeof APPROVAL_CLASSES)[number];
+
+/**
  * Opt-in proposals for code, datafeeds, harnesses, or a Claude Code Pro build
  * after Joe approves. NEVER auto-executed by the provisioner.
  */
@@ -224,11 +240,39 @@ export const BuildProposalSchema = z
     cost_risk_notes: z.string().min(1).max(1000),
     /** Agents may recommend CC Pro, but NEVER spawn without Joe. */
     spawn_recommendation: z.enum(['none', 'claude_code_pro_after_approval']),
-    approval_required: z.literal(true),
-    /** pending until Joe greenlights; provisioner ignores these entirely. */
+    /**
+     * Who must OK this before work starts. See {@link APPROVAL_CLASSES}.
+     * Public scrapes and in-repo code are `auto_agent` (agent should just run);
+     * paid feeds / secrets / cloud daemons are `joe_infra`; anything that
+     * implies live size is `joe_live_risk`.
+     */
+    approval_class: z.enum(APPROVAL_CLASSES).default('joe_infra'),
+    /**
+     * Does this buildout need a recorded decision before work starts?
+     *
+     * For `auto_agent` buildouts this is `false`: the agent should just do the
+     * work (or decline) — listing it is a notebook for humans, not a Joe gate.
+     * For `joe_infra` and `joe_live_risk` it is `true`: Joe must OK it. The
+     * provisioner never auto-executes any buildout regardless of this field.
+     */
+    approval_required: z.boolean(),
+    /** pending until Joe greenlights (joe_*) or the agent acts (auto_agent). */
     decision: z.enum(['pending', 'approved', 'denied', 'shelved']).default('pending'),
   })
-  .strict();
+  .strict()
+  .refine((value) => !BANNED_BUILDOUT_IDS.has(value.id), {
+    message:
+      'proposed_buildouts[].id names a tool that has already shipped — run the CLI instead of re-proposing it (see src/research/registry.ts)',
+    path: ['id'],
+  })
+  .refine(
+    (value) => value.approval_class === 'auto_agent' ? !value.approval_required : value.approval_required,
+    {
+      message:
+        'approval_required must be false for auto_agent (agent runs it, no Joe gate) and true for joe_infra / joe_live_risk',
+      path: ['approval_required'],
+    },
+  );
 
 export const ExecutionPlanSchema = z
   .object({

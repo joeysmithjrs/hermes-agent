@@ -1,0 +1,3269 @@
+[
+ {
+  "chart": {
+   "_comment": "2026-07-31 00:00",
+   "caption": "Inflation Nowcasting",
+   "subcaption": "2026-4",
+   "yaxisname": "Year-over-year percent change",
+   "legendnumcolumns": "4",
+   "labelpadding": "10",
+   "showvalues": "0",
+   "showexportdatamenuitem": "1",
+   "showtooltip": "1",
+   "basefont": "Helvetica",
+   "bgalpha": "0",
+   "showborder": "0"
+  },
+  "categories": [
+   {
+    "category": [
+     {
+      "label": "04/01"
+     },
+     {
+      "label": "04/02"
+     },
+     {
+      "label": "04/03"
+     },
+     {
+      "label": "04/06"
+     },
+     {
+      "label": "04/07"
+     },
+     {
+      "label": "04/08"
+     },
+     {
+      "label": "04/09"
+     },
+     {
+      "label": "PCE Feb",
+      "labelposition": "0",
+      "lineposition": "0",
+      "color": "666666",
+      "vline": "true"
+     },
+     {
+      "label": "04/10"
+     },
+     {
+      "label": "CPI Mar",
+      "labelposition": "0",
+      "lineposition": "0",
+      "color": "666666",
+      "vline": "true"
+     },
+     {
+      "label": "04/13"
+     },
+     {
+      "label": "04/14"
+     },
+     {
+      "label": "04/15"
+     },
+     {
+      "label": "04/16"
+     },
+     {
+      "label": "04/17"
+     },
+     {
+      "label": "04/20"
+     },
+     {
+      "label": "04/21"
+     },
+     {
+      "label": "04/22"
+     },
+     {
+      "label": "04/23"
+     },
+     {
+      "label": "04/24"
+     },
+     {
+      "label": "04/27"
+     },
+     {
+      "label": "04/28"
+     },
+     {
+      "label": "04/29"
+     },
+     {
+      "label": "04/30"
+     },
+     {
+      "label": "PCE Mar",
+      "labelposition": "0",
+      "lineposition": "0",
+      "color": "666666",
+      "vline": "true"
+     },
+     {
+      "label": "05/01"
+     },
+     {
+      "label": "05/04"
+     },
+     {
+      "label": "05/05"
+     },
+     {
+      "label": "05/06"
+     },
+     {
+      "label": "05/07"
+     },
+     {
+      "label": "05/08"
+     },
+     {
+      "label": "05/11"
+     },
+     {
+      "label": "05/12"
+     },
+     {
+      "label": "CPI Apr",
+      "labelposition": "0",
+      "lineposition": "0",
+      "color": "666666",
+      "vline": "true"
+     },
+     {
+      "label": "05/13"
+     },
+     {
+      "label": "05/14"
+     },
+     {
+      "label": "05/15"
+     },
+     {
+      "label": "05/18"
+     },
+     {
+      "label": "05/19"
+     },
+     {
+      "label": "05/20"
+     },
+     {
+      "label": "05/21"
+     },
+     {
+      "label": "05/22"
+     },
+     {
+      "label": "05/26"
+     },
+     {
+      "label": "05/27"
+     },
+     {
+      "label": "05/28"
+     }
+    ]
+   }
+  ],
+  "dataset": [
+   {
+    "seriesname": "CPI Inflation",
+    "color": "e03430",
+    "data": [
+     {
+      "value": "3.70561658506008",
+      "tooltext": "CPI Inflation{br}04/01{br}3.70561658506008{br}"
+     },
+     {
+      "value": "3.27752129424945",
+      "tooltext": "CPI Inflation{br}04/02{br}3.27752129424945{br}"
+     },
+     {
+      "value": "3.37551751119769",
+      "tooltext": "CPI Inflation{br}04/03{br}3.37551751119769{br}"
+     },
+     {
+      "value": "3.37551751119769",
+      "tooltext": "CPI Inflation{br}04/06{br}3.37551751119769{br}"
+     },
+     {
+      "value": "3.56177016600139",
+      "tooltext": "CPI Inflation{br}04/07{br}3.56177016600139{br}"
+     },
+     {
+      "value": "3.56177016600139",
+      "tooltext": "CPI Inflation{br}04/08{br}3.56177016600139{br}"
+     },
+     {
+      "value": "3.56177016600139",
+      "tooltext": "CPI Inflation{br}04/09{br}3.56177016600139{br}PCE Feb"
+     },
+     {
+      "value": "3.58095421656008",
+      "tooltext": "CPI Inflation{br}04/10{br}3.58095421656008{br}CPI Mar"
+     },
+     {
+      "value": "3.58095421656008",
+      "tooltext": "CPI Inflation{br}04/13{br}3.58095421656008{br}"
+     },
+     {
+      "value": "3.58095421656008",
+      "tooltext": "CPI Inflation{br}04/14{br}3.58095421656008{br}"
+     },
+     {
+      "value": "3.58095421656008",
+      "tooltext": "CPI Inflation{br}04/15{br}3.58095421656008{br}"
+     },
+     {
+      "value": "3.58095421656008",
+      "tooltext": "CPI Inflation{br}04/16{br}3.58095421656008{br}"
+     },
+     {
+      "value": "3.58095421656008",
+      "tooltext": "CPI Inflation{br}04/17{br}3.58095421656008{br}"
+     },
+     {
+      "value": "3.58095421656008",
+      "tooltext": "CPI Inflation{br}04/20{br}3.58095421656008{br}"
+     },
+     {
+      "value": "3.58095421656008",
+      "tooltext": "CPI Inflation{br}04/21{br}3.58095421656008{br}"
+     },
+     {
+      "value": "3.55850998734835",
+      "tooltext": "CPI Inflation{br}04/22{br}3.55850998734835{br}"
+     },
+     {
+      "value": "3.55850998734835",
+      "tooltext": "CPI Inflation{br}04/23{br}3.55850998734835{br}"
+     },
+     {
+      "value": "3.55850998734835",
+      "tooltext": "CPI Inflation{br}04/24{br}3.55850998734835{br}"
+     },
+     {
+      "value": "3.55850998734835",
+      "tooltext": "CPI Inflation{br}04/27{br}3.55850998734835{br}"
+     },
+     {
+      "value": "3.55850998734835",
+      "tooltext": "CPI Inflation{br}04/28{br}3.55850998734835{br}"
+     },
+     {
+      "value": "3.56478551196346",
+      "tooltext": "CPI Inflation{br}04/29{br}3.56478551196346{br}"
+     },
+     {
+      "value": "3.56478551196346",
+      "tooltext": "CPI Inflation{br}04/30{br}3.56478551196346{br}PCE Mar"
+     },
+     {
+      "value": "3.56478551196346",
+      "tooltext": "CPI Inflation{br}05/01{br}3.56478551196346{br}"
+     },
+     {
+      "value": "3.56478551196346",
+      "tooltext": "CPI Inflation{br}05/04{br}3.56478551196346{br}"
+     },
+     {
+      "value": "3.56478551196346",
+      "tooltext": "CPI Inflation{br}05/05{br}3.56478551196346{br}"
+     },
+     {
+      "value": "3.56478551196346",
+      "tooltext": "CPI Inflation{br}05/06{br}3.56478551196346{br}"
+     },
+     {
+      "value": "3.56478551196346",
+      "tooltext": "CPI Inflation{br}05/07{br}3.56478551196346{br}"
+     },
+     {
+      "value": "3.56478551196346",
+      "tooltext": "CPI Inflation{br}05/08{br}3.56478551196346{br}"
+     },
+     {
+      "value": "3.56478551196346",
+      "tooltext": "CPI Inflation{br}05/11{br}3.56478551196346{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}05/12{br}{br}CPI Apr"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}05/13{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}05/14{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}05/15{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}05/18{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}05/19{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}05/20{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}05/21{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}05/22{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}05/26{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}05/27{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}05/28{br}{br}"
+     }
+    ]
+   },
+   {
+    "seriesname": "Actual CPI Inflation",
+    "color": "e03430",
+    "data": [
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/01{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/02{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/03{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/06{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/07{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/08{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/09{br}{br}PCE Feb"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/10{br}{br}CPI Mar"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/13{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/14{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/15{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/16{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/17{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/20{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/21{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/22{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/23{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/24{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/27{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/28{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/29{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}04/30{br}{br}PCE Mar"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/01{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/04{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/05{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/06{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/07{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/08{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/11{br}{br}"
+     },
+     {
+      "value": "3.81084493212176",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/12{br}3.81084493212176{br}CPI Apr"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/13{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/14{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/15{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/18{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/19{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/20{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/21{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/22{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/26{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/27{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/28{br}{br}"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "chart": {
+   "_comment": "2026-07-31 00:00",
+   "caption": "Inflation Nowcasting",
+   "subcaption": "2026-5",
+   "yaxisname": "Year-over-year percent change",
+   "legendnumcolumns": "4",
+   "labelpadding": "10",
+   "showvalues": "0",
+   "showexportdatamenuitem": "1",
+   "showtooltip": "1",
+   "basefont": "Helvetica",
+   "bgalpha": "0",
+   "showborder": "0"
+  },
+  "categories": [
+   {
+    "category": [
+     {
+      "label": "05/01"
+     },
+     {
+      "label": "05/04"
+     },
+     {
+      "label": "05/05"
+     },
+     {
+      "label": "05/06"
+     },
+     {
+      "label": "05/07"
+     },
+     {
+      "label": "05/08"
+     },
+     {
+      "label": "05/11"
+     },
+     {
+      "label": "05/12"
+     },
+     {
+      "label": "CPI Apr",
+      "labelposition": "0",
+      "lineposition": "0",
+      "color": "666666",
+      "vline": "true"
+     },
+     {
+      "label": "05/13"
+     },
+     {
+      "label": "05/14"
+     },
+     {
+      "label": "05/15"
+     },
+     {
+      "label": "05/18"
+     },
+     {
+      "label": "05/19"
+     },
+     {
+      "label": "05/20"
+     },
+     {
+      "label": "05/21"
+     },
+     {
+      "label": "05/22"
+     },
+     {
+      "label": "05/26"
+     },
+     {
+      "label": "05/27"
+     },
+     {
+      "label": "05/28"
+     },
+     {
+      "label": "PCE Apr",
+      "labelposition": "0",
+      "lineposition": "0",
+      "color": "666666",
+      "vline": "true"
+     },
+     {
+      "label": "05/29"
+     },
+     {
+      "label": "06/01"
+     },
+     {
+      "label": "06/02"
+     },
+     {
+      "label": "06/03"
+     },
+     {
+      "label": "06/04"
+     },
+     {
+      "label": "06/05"
+     },
+     {
+      "label": "06/08"
+     },
+     {
+      "label": "06/09"
+     },
+     {
+      "label": "06/10"
+     },
+     {
+      "label": "CPI May",
+      "labelposition": "0",
+      "lineposition": "0",
+      "color": "666666",
+      "vline": "true"
+     },
+     {
+      "label": "06/11"
+     },
+     {
+      "label": "06/12"
+     },
+     {
+      "label": "06/15"
+     },
+     {
+      "label": "06/16"
+     },
+     {
+      "label": "06/17"
+     },
+     {
+      "label": "06/18"
+     },
+     {
+      "label": "06/22"
+     },
+     {
+      "label": "06/23"
+     },
+     {
+      "label": "06/24"
+     },
+     {
+      "label": "06/25"
+     }
+    ]
+   }
+  ],
+  "dataset": [
+   {
+    "seriesname": "CPI Inflation",
+    "color": "e03430",
+    "data": [
+     {
+      "value": "3.87846214527912",
+      "tooltext": "CPI Inflation{br}05/01{br}3.87846214527912{br}"
+     },
+     {
+      "value": "3.73877157295728",
+      "tooltext": "CPI Inflation{br}05/04{br}3.73877157295728{br}"
+     },
+     {
+      "value": "3.73877157295728",
+      "tooltext": "CPI Inflation{br}05/05{br}3.73877157295728{br}"
+     },
+     {
+      "value": "3.89038625712814",
+      "tooltext": "CPI Inflation{br}05/06{br}3.89038625712814{br}"
+     },
+     {
+      "value": "3.89038625712814",
+      "tooltext": "CPI Inflation{br}05/07{br}3.89038625712814{br}"
+     },
+     {
+      "value": "3.89038625712814",
+      "tooltext": "CPI Inflation{br}05/08{br}3.89038625712814{br}"
+     },
+     {
+      "value": "3.89038625712814",
+      "tooltext": "CPI Inflation{br}05/11{br}3.89038625712814{br}"
+     },
+     {
+      "value": "4.15736855821616",
+      "tooltext": "CPI Inflation{br}05/12{br}4.15736855821616{br}CPI Apr"
+     },
+     {
+      "value": "4.17624992371923",
+      "tooltext": "CPI Inflation{br}05/13{br}4.17624992371923{br}"
+     },
+     {
+      "value": "4.17624992371923",
+      "tooltext": "CPI Inflation{br}05/14{br}4.17624992371923{br}"
+     },
+     {
+      "value": "4.17624992371923",
+      "tooltext": "CPI Inflation{br}05/15{br}4.17624992371923{br}"
+     },
+     {
+      "value": "4.17624992371923",
+      "tooltext": "CPI Inflation{br}05/18{br}4.17624992371923{br}"
+     },
+     {
+      "value": "4.17624992371923",
+      "tooltext": "CPI Inflation{br}05/19{br}4.17624992371923{br}"
+     },
+     {
+      "value": "4.1806689667093",
+      "tooltext": "CPI Inflation{br}05/20{br}4.1806689667093{br}"
+     },
+     {
+      "value": "4.1806689667093",
+      "tooltext": "CPI Inflation{br}05/21{br}4.1806689667093{br}"
+     },
+     {
+      "value": "4.1806689667093",
+      "tooltext": "CPI Inflation{br}05/22{br}4.1806689667093{br}"
+     },
+     {
+      "value": "4.1806689667093",
+      "tooltext": "CPI Inflation{br}05/26{br}4.1806689667093{br}"
+     },
+     {
+      "value": "4.1806689667093",
+      "tooltext": "CPI Inflation{br}05/27{br}4.1806689667093{br}"
+     },
+     {
+      "value": "4.17966463875701",
+      "tooltext": "CPI Inflation{br}05/28{br}4.17966463875701{br}PCE Apr"
+     },
+     {
+      "value": "4.17966463875701",
+      "tooltext": "CPI Inflation{br}05/29{br}4.17966463875701{br}"
+     },
+     {
+      "value": "4.17966463875701",
+      "tooltext": "CPI Inflation{br}06/01{br}4.17966463875701{br}"
+     },
+     {
+      "value": "4.17966463875701",
+      "tooltext": "CPI Inflation{br}06/02{br}4.17966463875701{br}"
+     },
+     {
+      "value": "4.17966463875701",
+      "tooltext": "CPI Inflation{br}06/03{br}4.17966463875701{br}"
+     },
+     {
+      "value": "4.17966463875701",
+      "tooltext": "CPI Inflation{br}06/04{br}4.17966463875701{br}"
+     },
+     {
+      "value": "4.17966463875701",
+      "tooltext": "CPI Inflation{br}06/05{br}4.17966463875701{br}"
+     },
+     {
+      "value": "4.17966463875701",
+      "tooltext": "CPI Inflation{br}06/08{br}4.17966463875701{br}"
+     },
+     {
+      "value": "4.17966463875701",
+      "tooltext": "CPI Inflation{br}06/09{br}4.17966463875701{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}06/10{br}{br}CPI May"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}06/11{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}06/12{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}06/15{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}06/16{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}06/17{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}06/18{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}06/22{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}06/23{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}06/24{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}06/25{br}{br}"
+     }
+    ]
+   },
+   {
+    "seriesname": "Actual CPI Inflation",
+    "color": "e03430",
+    "data": [
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/01{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/04{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/05{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/06{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/07{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/08{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/11{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/12{br}{br}CPI Apr"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/13{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/14{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/15{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/18{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/19{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/20{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/21{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/22{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/26{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/27{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/28{br}{br}PCE Apr"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}05/29{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/01{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/02{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/03{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/04{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/05{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/08{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/09{br}{br}"
+     },
+     {
+      "value": "4.24867403916445",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/10{br}4.24867403916445{br}CPI May"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/11{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/12{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/15{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/16{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/17{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/18{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/22{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/23{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/24{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/25{br}{br}"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "chart": {
+   "_comment": "2026-07-31 00:00",
+   "caption": "Inflation Nowcasting",
+   "subcaption": "2026-6",
+   "yaxisname": "Year-over-year percent change",
+   "legendnumcolumns": "4",
+   "labelpadding": "10",
+   "showvalues": "0",
+   "showexportdatamenuitem": "1",
+   "showtooltip": "1",
+   "basefont": "Helvetica",
+   "bgalpha": "0",
+   "showborder": "0"
+  },
+  "categories": [
+   {
+    "category": [
+     {
+      "label": "06/01"
+     },
+     {
+      "label": "06/02"
+     },
+     {
+      "label": "06/03"
+     },
+     {
+      "label": "06/04"
+     },
+     {
+      "label": "06/05"
+     },
+     {
+      "label": "06/08"
+     },
+     {
+      "label": "06/09"
+     },
+     {
+      "label": "06/10"
+     },
+     {
+      "label": "CPI May",
+      "labelposition": "0",
+      "lineposition": "0",
+      "color": "666666",
+      "vline": "true"
+     },
+     {
+      "label": "06/11"
+     },
+     {
+      "label": "06/12"
+     },
+     {
+      "label": "06/15"
+     },
+     {
+      "label": "06/16"
+     },
+     {
+      "label": "06/17"
+     },
+     {
+      "label": "06/18"
+     },
+     {
+      "label": "06/22"
+     },
+     {
+      "label": "06/23"
+     },
+     {
+      "label": "06/24"
+     },
+     {
+      "label": "06/25"
+     },
+     {
+      "label": "PCE May",
+      "labelposition": "0",
+      "lineposition": "0",
+      "color": "666666",
+      "vline": "true"
+     },
+     {
+      "label": "06/26"
+     },
+     {
+      "label": "06/29"
+     },
+     {
+      "label": "06/30"
+     },
+     {
+      "label": "07/01"
+     },
+     {
+      "label": "07/02"
+     },
+     {
+      "label": "07/03"
+     },
+     {
+      "label": "07/06"
+     },
+     {
+      "label": "07/07"
+     },
+     {
+      "label": "07/08"
+     },
+     {
+      "label": "07/09"
+     },
+     {
+      "label": "07/10"
+     },
+     {
+      "label": "07/13"
+     },
+     {
+      "label": "07/14"
+     },
+     {
+      "label": "CPI Jun",
+      "labelposition": "0",
+      "lineposition": "0",
+      "color": "666666",
+      "vline": "true"
+     },
+     {
+      "label": "07/15"
+     },
+     {
+      "label": "07/16"
+     },
+     {
+      "label": "07/17"
+     },
+     {
+      "label": "07/20"
+     },
+     {
+      "label": "07/21"
+     },
+     {
+      "label": "07/22"
+     },
+     {
+      "label": "07/23"
+     },
+     {
+      "label": "07/24"
+     },
+     {
+      "label": "07/27"
+     },
+     {
+      "label": "07/28"
+     },
+     {
+      "label": "07/29"
+     },
+     {
+      "label": "07/30"
+     }
+    ]
+   }
+  ],
+  "dataset": [
+   {
+    "seriesname": "CPI Inflation",
+    "color": "e03430",
+    "data": [
+     {
+      "value": "3.82115112013934",
+      "tooltext": "CPI Inflation{br}06/01{br}3.82115112013934{br}"
+     },
+     {
+      "value": "3.88834695922466",
+      "tooltext": "CPI Inflation{br}06/02{br}3.88834695922466{br}"
+     },
+     {
+      "value": "4.04506162945988",
+      "tooltext": "CPI Inflation{br}06/03{br}4.04506162945988{br}"
+     },
+     {
+      "value": "4.04506162945988",
+      "tooltext": "CPI Inflation{br}06/04{br}4.04506162945988{br}"
+     },
+     {
+      "value": "4.04506162945988",
+      "tooltext": "CPI Inflation{br}06/05{br}4.04506162945988{br}"
+     },
+     {
+      "value": "4.04506162945988",
+      "tooltext": "CPI Inflation{br}06/08{br}4.04506162945988{br}"
+     },
+     {
+      "value": "4.04506162945988",
+      "tooltext": "CPI Inflation{br}06/09{br}4.04506162945988{br}"
+     },
+     {
+      "value": "4.05298345624507",
+      "tooltext": "CPI Inflation{br}06/10{br}4.05298345624507{br}CPI May"
+     },
+     {
+      "value": "4.05298345624507",
+      "tooltext": "CPI Inflation{br}06/11{br}4.05298345624507{br}"
+     },
+     {
+      "value": "4.05298345624507",
+      "tooltext": "CPI Inflation{br}06/12{br}4.05298345624507{br}"
+     },
+     {
+      "value": "4.05298345624507",
+      "tooltext": "CPI Inflation{br}06/15{br}4.05298345624507{br}"
+     },
+     {
+      "value": "4.05298345624507",
+      "tooltext": "CPI Inflation{br}06/16{br}4.05298345624507{br}"
+     },
+     {
+      "value": "4.00984719630431",
+      "tooltext": "CPI Inflation{br}06/17{br}4.00984719630431{br}"
+     },
+     {
+      "value": "4.00984719630431",
+      "tooltext": "CPI Inflation{br}06/18{br}4.00984719630431{br}"
+     },
+     {
+      "value": "4.00984719630431",
+      "tooltext": "CPI Inflation{br}06/22{br}4.00984719630431{br}"
+     },
+     {
+      "value": "4.00984719630431",
+      "tooltext": "CPI Inflation{br}06/23{br}4.00984719630431{br}"
+     },
+     {
+      "value": "3.96228510622507",
+      "tooltext": "CPI Inflation{br}06/24{br}3.96228510622507{br}"
+     },
+     {
+      "value": "3.96228510622507",
+      "tooltext": "CPI Inflation{br}06/25{br}3.96228510622507{br}PCE May"
+     },
+     {
+      "value": "3.96228510622507",
+      "tooltext": "CPI Inflation{br}06/26{br}3.96228510622507{br}"
+     },
+     {
+      "value": "3.96228510622507",
+      "tooltext": "CPI Inflation{br}06/29{br}3.96228510622507{br}"
+     },
+     {
+      "value": "3.92118098800982",
+      "tooltext": "CPI Inflation{br}06/30{br}3.92118098800982{br}"
+     },
+     {
+      "value": "3.92118098800982",
+      "tooltext": "CPI Inflation{br}07/01{br}3.92118098800982{br}"
+     },
+     {
+      "value": "3.92118098800982",
+      "tooltext": "CPI Inflation{br}07/02{br}3.92118098800982{br}"
+     },
+     {
+      "value": "3.92118098800982",
+      "tooltext": "CPI Inflation{br}07/03{br}3.92118098800982{br}"
+     },
+     {
+      "value": "3.92118098800982",
+      "tooltext": "CPI Inflation{br}07/06{br}3.92118098800982{br}"
+     },
+     {
+      "value": "3.92118098800982",
+      "tooltext": "CPI Inflation{br}07/07{br}3.92118098800982{br}"
+     },
+     {
+      "value": "3.92118098800982",
+      "tooltext": "CPI Inflation{br}07/08{br}3.92118098800982{br}"
+     },
+     {
+      "value": "3.92118098800982",
+      "tooltext": "CPI Inflation{br}07/09{br}3.92118098800982{br}"
+     },
+     {
+      "value": "3.92118098800982",
+      "tooltext": "CPI Inflation{br}07/10{br}3.92118098800982{br}"
+     },
+     {
+      "value": "3.92118098800982",
+      "tooltext": "CPI Inflation{br}07/13{br}3.92118098800982{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/14{br}{br}CPI Jun"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/15{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/16{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/17{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/20{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/21{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/22{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/23{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/24{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/27{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/28{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/29{br}{br}"
+     },
+     {
+      "value": "",
+      "tooltext": "CPI Inflation{br}07/30{br}{br}"
+     }
+    ]
+   },
+   {
+    "seriesname": "Actual CPI Inflation",
+    "color": "e03430",
+    "data": [
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/01{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/02{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/03{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/04{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/05{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/08{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/09{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/10{br}{br}CPI May"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/11{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/12{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/15{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/16{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/17{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/18{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/22{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/23{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/24{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/25{br}{br}PCE May"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/26{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/29{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}06/30{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/01{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/02{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/03{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/06{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/07{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/08{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/09{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/10{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/13{br}{br}"
+     },
+     {
+      "value": "3.53142506378639",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/14{br}3.53142506378639{br}CPI Jun"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/15{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/16{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/17{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/20{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/21{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/22{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/23{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/24{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/27{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/28{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/29{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/30{br}{br}"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "chart": {
+   "_comment": "2026-07-31 00:00",
+   "caption": "Inflation Nowcasting",
+   "subcaption": "2026-7",
+   "yaxisname": "Year-over-year percent change",
+   "legendnumcolumns": "4",
+   "labelpadding": "10",
+   "showvalues": "0",
+   "showexportdatamenuitem": "1",
+   "showtooltip": "1",
+   "basefont": "Helvetica",
+   "bgalpha": "0",
+   "showborder": "0"
+  },
+  "categories": [
+   {
+    "category": [
+     {
+      "label": "07/01"
+     },
+     {
+      "label": "07/02"
+     },
+     {
+      "label": "07/03"
+     },
+     {
+      "label": "07/06"
+     },
+     {
+      "label": "07/07"
+     },
+     {
+      "label": "07/08"
+     },
+     {
+      "label": "07/09"
+     },
+     {
+      "label": "07/10"
+     },
+     {
+      "label": "07/13"
+     },
+     {
+      "label": "07/14"
+     },
+     {
+      "label": "CPI Jun",
+      "labelposition": "0",
+      "lineposition": "0",
+      "color": "666666",
+      "vline": "true"
+     },
+     {
+      "label": "07/15"
+     },
+     {
+      "label": "07/16"
+     },
+     {
+      "label": "07/17"
+     },
+     {
+      "label": "07/20"
+     },
+     {
+      "label": "07/21"
+     },
+     {
+      "label": "07/22"
+     },
+     {
+      "label": "07/23"
+     },
+     {
+      "label": "07/24"
+     },
+     {
+      "label": "07/27"
+     },
+     {
+      "label": "07/28"
+     },
+     {
+      "label": "07/29"
+     },
+     {
+      "label": "07/30"
+     },
+     {
+      "label": "PCE Jun",
+      "labelposition": "0",
+      "lineposition": "0",
+      "color": "666666",
+      "vline": "true"
+     },
+     {
+      "label": "07/31"
+     }
+    ]
+   }
+  ],
+  "dataset": [
+   {
+    "seriesname": "CPI Inflation",
+    "color": "e03430",
+    "data": [
+     {
+      "value": "3.52366209832904",
+      "tooltext": "CPI Inflation{br}07/01{br}3.52366209832904{br}"
+     },
+     {
+      "value": "3.48923335316296",
+      "tooltext": "CPI Inflation{br}07/02{br}3.48923335316296{br}"
+     },
+     {
+      "value": "3.49216617219563",
+      "tooltext": "CPI Inflation{br}07/03{br}3.49216617219563{br}"
+     },
+     {
+      "value": "3.49586407445421",
+      "tooltext": "CPI Inflation{br}07/06{br}3.49586407445421{br}"
+     },
+     {
+      "value": "3.49688418542211",
+      "tooltext": "CPI Inflation{br}07/07{br}3.49688418542211{br}"
+     },
+     {
+      "value": "3.71389995868512",
+      "tooltext": "CPI Inflation{br}07/08{br}3.71389995868512{br}"
+     },
+     {
+      "value": "3.71389995868512",
+      "tooltext": "CPI Inflation{br}07/09{br}3.71389995868512{br}"
+     },
+     {
+      "value": "3.71389995868512",
+      "tooltext": "CPI Inflation{br}07/10{br}3.71389995868512{br}"
+     },
+     {
+      "value": "3.71389995868512",
+      "tooltext": "CPI Inflation{br}07/13{br}3.71389995868512{br}"
+     },
+     {
+      "value": "3.28632264441553",
+      "tooltext": "CPI Inflation{br}07/14{br}3.28632264441553{br}CPI Jun"
+     },
+     {
+      "value": "3.31913586579038",
+      "tooltext": "CPI Inflation{br}07/15{br}3.31913586579038{br}"
+     },
+     {
+      "value": "3.31913586579038",
+      "tooltext": "CPI Inflation{br}07/16{br}3.31913586579038{br}"
+     },
+     {
+      "value": "3.31913586579038",
+      "tooltext": "CPI Inflation{br}07/17{br}3.31913586579038{br}"
+     },
+     {
+      "value": "3.31913586579038",
+      "tooltext": "CPI Inflation{br}07/20{br}3.31913586579038{br}"
+     },
+     {
+      "value": "3.31913586579038",
+      "tooltext": "CPI Inflation{br}07/21{br}3.31913586579038{br}"
+     },
+     {
+      "value": "3.37152188588008",
+      "tooltext": "CPI Inflation{br}07/22{br}3.37152188588008{br}"
+     },
+     {
+      "value": "3.37152188588008",
+      "tooltext": "CPI Inflation{br}07/23{br}3.37152188588008{br}"
+     },
+     {
+      "value": "3.37152188588008",
+      "tooltext": "CPI Inflation{br}07/24{br}3.37152188588008{br}"
+     },
+     {
+      "value": "3.37152188588008",
+      "tooltext": "CPI Inflation{br}07/27{br}3.37152188588008{br}"
+     },
+     {
+      "value": "3.37152188588008",
+      "tooltext": "CPI Inflation{br}07/28{br}3.37152188588008{br}"
+     },
+     {
+      "value": "3.41865491219704",
+      "tooltext": "CPI Inflation{br}07/29{br}3.41865491219704{br}"
+     },
+     {
+      "value": "3.41865491219704",
+      "tooltext": "CPI Inflation{br}07/30{br}3.41865491219704{br}PCE Jun"
+     },
+     {
+      "value": "3.41865491219704",
+      "tooltext": "CPI Inflation{br}07/31{br}3.41865491219704{br}"
+     }
+    ]
+   },
+   {
+    "seriesname": "Core CPI Inflation",
+    "color": "478ec7",
+    "data": [
+     {
+      "value": "2.80521134528053",
+      "tooltext": "Core CPI{br}07/01{br}2.80521134528053{br}"
+     },
+     {
+      "value": "2.80521134528053",
+      "tooltext": "Core CPI{br}07/02{br}2.80521134528053{br}"
+     },
+     {
+      "value": "2.80521134528053",
+      "tooltext": "Core CPI{br}07/03{br}2.80521134528053{br}"
+     },
+     {
+      "value": "2.80521134528053",
+      "tooltext": "Core CPI{br}07/06{br}2.80521134528053{br}"
+     },
+     {
+      "value": "2.80521134528053",
+      "tooltext": "Core CPI{br}07/07{br}2.80521134528053{br}"
+     },
+     {
+      "value": "2.80521134528053",
+      "tooltext": "Core CPI{br}07/08{br}2.80521134528053{br}"
+     },
+     {
+      "value": "2.80521134528053",
+      "tooltext": "Core CPI{br}07/09{br}2.80521134528053{br}"
+     },
+     {
+      "value": "2.80521134528053",
+      "tooltext": "Core CPI{br}07/10{br}2.80521134528053{br}"
+     },
+     {
+      "value": "2.80521134528053",
+      "tooltext": "Core CPI{br}07/13{br}2.80521134528053{br}"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/14{br}2.52318470411008{br}CPI Jun"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/15{br}2.52318470411008{br}"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/16{br}2.52318470411008{br}"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/17{br}2.52318470411008{br}"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/20{br}2.52318470411008{br}"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/21{br}2.52318470411008{br}"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/22{br}2.52318470411008{br}"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/23{br}2.52318470411008{br}"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/24{br}2.52318470411008{br}"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/27{br}2.52318470411008{br}"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/28{br}2.52318470411008{br}"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/29{br}2.52318470411008{br}"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/30{br}2.52318470411008{br}PCE Jun"
+     },
+     {
+      "value": "2.52318470411008",
+      "tooltext": "Core CPI{br}07/31{br}2.52318470411008{br}"
+     }
+    ]
+   },
+   {
+    "seriesname": "PCE Inflation",
+    "color": "f5932a",
+    "data": [
+     {
+      "value": "3.72920046725924",
+      "tooltext": "PCE Inflation{br}07/01{br}3.72920046725924{br}"
+     },
+     {
+      "value": "3.70921692853594",
+      "tooltext": "PCE Inflation{br}07/02{br}3.70921692853594{br}"
+     },
+     {
+      "value": "3.71091922998275",
+      "tooltext": "PCE Inflation{br}07/03{br}3.71091922998275{br}"
+     },
+     {
+      "value": "3.71306561006783",
+      "tooltext": "PCE Inflation{br}07/06{br}3.71306561006783{br}"
+     },
+     {
+      "value": "3.71365771491892",
+      "tooltext": "PCE Inflation{br}07/07{br}3.71365771491892{br}"
+     },
+     {
+      "value": "3.83962057205036",
+      "tooltext": "PCE Inflation{br}07/08{br}3.83962057205036{br}"
+     },
+     {
+      "value": "3.83962057205036",
+      "tooltext": "PCE Inflation{br}07/09{br}3.83962057205036{br}"
+     },
+     {
+      "value": "3.83962057205036",
+      "tooltext": "PCE Inflation{br}07/10{br}3.83962057205036{br}"
+     },
+     {
+      "value": "3.83962057205036",
+      "tooltext": "PCE Inflation{br}07/13{br}3.83962057205036{br}"
+     },
+     {
+      "value": "3.58044776981528",
+      "tooltext": "PCE Inflation{br}07/14{br}3.58044776981528{br}CPI Jun"
+     },
+     {
+      "value": "3.60029599479139",
+      "tooltext": "PCE Inflation{br}07/15{br}3.60029599479139{br}"
+     },
+     {
+      "value": "3.60029599479139",
+      "tooltext": "PCE Inflation{br}07/16{br}3.60029599479139{br}"
+     },
+     {
+      "value": "3.60029599479139",
+      "tooltext": "PCE Inflation{br}07/17{br}3.60029599479139{br}"
+     },
+     {
+      "value": "3.60029599479139",
+      "tooltext": "PCE Inflation{br}07/20{br}3.60029599479139{br}"
+     },
+     {
+      "value": "3.60029599479139",
+      "tooltext": "PCE Inflation{br}07/21{br}3.60029599479139{br}"
+     },
+     {
+      "value": "3.63198351185854",
+      "tooltext": "PCE Inflation{br}07/22{br}3.63198351185854{br}"
+     },
+     {
+      "value": "3.63198351185854",
+      "tooltext": "PCE Inflation{br}07/23{br}3.63198351185854{br}"
+     },
+     {
+      "value": "3.63198351185854",
+      "tooltext": "PCE Inflation{br}07/24{br}3.63198351185854{br}"
+     },
+     {
+      "value": "3.63198351185854",
+      "tooltext": "PCE Inflation{br}07/27{br}3.63198351185854{br}"
+     },
+     {
+      "value": "3.63198351185854",
+      "tooltext": "PCE Inflation{br}07/28{br}3.63198351185854{br}"
+     },
+     {
+      "value": "3.66049357185712",
+      "tooltext": "PCE Inflation{br}07/29{br}3.66049357185712{br}"
+     },
+     {
+      "value": "3.68525408061453",
+      "tooltext": "PCE Inflation{br}07/30{br}3.68525408061453{br}PCE Jun"
+     },
+     {
+      "value": "3.68525408061453",
+      "tooltext": "PCE Inflation{br}07/31{br}3.68525408061453{br}"
+     }
+    ]
+   },
+   {
+    "seriesname": "Core PCE Inflation",
+    "color": "54a215",
+    "data": [
+     {
+      "value": "3.46701718537288",
+      "tooltext": "Core PCE{br}07/01{br}3.46701718537288{br}"
+     },
+     {
+      "value": "3.46701718537288",
+      "tooltext": "Core PCE{br}07/02{br}3.46701718537288{br}"
+     },
+     {
+      "value": "3.46701718537288",
+      "tooltext": "Core PCE{br}07/03{br}3.46701718537288{br}"
+     },
+     {
+      "value": "3.46701718537288",
+      "tooltext": "Core PCE{br}07/06{br}3.46701718537288{br}"
+     },
+     {
+      "value": "3.46701718537288",
+      "tooltext": "Core PCE{br}07/07{br}3.46701718537288{br}"
+     },
+     {
+      "value": "3.46701718537288",
+      "tooltext": "Core PCE{br}07/08{br}3.46701718537288{br}"
+     },
+     {
+      "value": "3.46701718537288",
+      "tooltext": "Core PCE{br}07/09{br}3.46701718537288{br}"
+     },
+     {
+      "value": "3.46701718537288",
+      "tooltext": "Core PCE{br}07/10{br}3.46701718537288{br}"
+     },
+     {
+      "value": "3.46701718537288",
+      "tooltext": "Core PCE{br}07/13{br}3.46701718537288{br}"
+     },
+     {
+      "value": "3.36309175070884",
+      "tooltext": "Core PCE{br}07/14{br}3.36309175070884{br}CPI Jun"
+     },
+     {
+      "value": "3.36309175070884",
+      "tooltext": "Core PCE{br}07/15{br}3.36309175070884{br}"
+     },
+     {
+      "value": "3.36309175070884",
+      "tooltext": "Core PCE{br}07/16{br}3.36309175070884{br}"
+     },
+     {
+      "value": "3.36309175070884",
+      "tooltext": "Core PCE{br}07/17{br}3.36309175070884{br}"
+     },
+     {
+      "value": "3.36309175070884",
+      "tooltext": "Core PCE{br}07/20{br}3.36309175070884{br}"
+     },
+     {
+      "value": "3.36309175070884",
+      "tooltext": "Core PCE{br}07/21{br}3.36309175070884{br}"
+     },
+     {
+      "value": "3.36309175070884",
+      "tooltext": "Core PCE{br}07/22{br}3.36309175070884{br}"
+     },
+     {
+      "value": "3.36309175070884",
+      "tooltext": "Core PCE{br}07/23{br}3.36309175070884{br}"
+     },
+     {
+      "value": "3.36309175070884",
+      "tooltext": "Core PCE{br}07/24{br}3.36309175070884{br}"
+     },
+     {
+      "value": "3.36309175070884",
+      "tooltext": "Core PCE{br}07/27{br}3.36309175070884{br}"
+     },
+     {
+      "value": "3.36309175070884",
+      "tooltext": "Core PCE{br}07/28{br}3.36309175070884{br}"
+     },
+     {
+      "value": "3.36309175070884",
+      "tooltext": "Core PCE{br}07/29{br}3.36309175070884{br}"
+     },
+     {
+      "value": "3.31215313416271",
+      "tooltext": "Core PCE{br}07/30{br}3.31215313416271{br}PCE Jun"
+     },
+     {
+      "value": "3.31215313416271",
+      "tooltext": "Core PCE{br}07/31{br}3.31215313416271{br}"
+     }
+    ]
+   },
+   {
+    "seriesname": "Actual CPI Inflation",
+    "color": "e03430",
+    "data": [
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/01{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/02{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/03{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/06{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/07{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/08{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/09{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/10{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/13{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/14{br}{br}CPI Jun"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/15{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/16{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/17{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/20{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/21{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/22{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/23{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/24{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/27{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/28{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/29{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/30{br}{br}PCE Jun"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "e03430",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual CPI Inflation{br}07/31{br}{br}"
+     }
+    ]
+   },
+   {
+    "seriesname": "Actual Core CPI Inflation",
+    "color": "478ec7",
+    "data": [
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/01{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/02{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/03{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/06{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/07{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/08{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/09{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/10{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/13{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/14{br}{br}CPI Jun"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/15{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/16{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/17{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/20{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/21{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/22{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/23{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/24{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/27{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/28{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/29{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/30{br}{br}PCE Jun"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "478ec7",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core CPI{br}07/31{br}{br}"
+     }
+    ]
+   },
+   {
+    "seriesname": "Actual PCE Inflation",
+    "color": "f5832a",
+    "data": [
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/01{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/02{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/03{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/06{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/07{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/08{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/09{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/10{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/13{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/14{br}{br}CPI Jun"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/15{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/16{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/17{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/20{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/21{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/22{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/23{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/24{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/27{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/28{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/29{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/30{br}{br}PCE Jun"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "f5832a",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual PCE Inflation{br}07/31{br}{br}"
+     }
+    ]
+   },
+   {
+    "seriesname": "Actual Core PCE Inflation",
+    "color": "54a215",
+    "data": [
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/01{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/02{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/03{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/06{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/07{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/08{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/09{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/10{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/13{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/14{br}{br}CPI Jun"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/15{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/16{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/17{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/20{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/21{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/22{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/23{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/24{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/27{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/28{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/29{br}{br}"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/30{br}{br}PCE Jun"
+     },
+     {
+      "value": "",
+      "anchorradius": "6",
+      "anchorbgcolor": "54a215",
+      "anchorbordercolor": "cccccc",
+      "anchorborderthickness": "1",
+      "tooltext": "Actual Core PCE{br}07/31{br}{br}"
+     }
+    ]
+   }
+  ]
+ }
+]

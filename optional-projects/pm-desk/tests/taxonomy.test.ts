@@ -9,6 +9,7 @@ import {
   ALL_CAPABILITIES,
   compileSeed,
   deskStateHash,
+  detectCapabilities,
   loadArenas,
   loadTaxonomy,
   type DeskCapability,
@@ -286,6 +287,16 @@ describe('deterministic seed compilation', () => {
       compileSeed({ ...baseInput(), capabilities: ['nonsense' as DeskCapability] }),
     ).toThrow(TaxonomyError);
     expect(ALL_CAPABILITIES).toContain('polymarket_public_data');
+  });
+
+  it('detectCapabilities advertises the capabilities a shipped tool provides', () => {
+    // A shipped research harness (cpi-calibrate) registers its capability through
+    // the registry, so the desk reports it without anyone hand-editing this list.
+    const caps = detectCapabilities();
+    expect(caps).toContain('cpi_nowcast_calibration');
+    expect(caps).toContain('polymarket_public_data');
+    // No duplicates leak in from the registry.
+    expect(new Set(caps).size).toBe(caps.length);
   });
 });
 

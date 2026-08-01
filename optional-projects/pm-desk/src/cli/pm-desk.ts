@@ -59,11 +59,15 @@ WORKFLOW
 
 EXECUTION PLAN (what the morning generator emits and the gate approves)
   plan validate --file <f>        Validate an ExecutionPlan
+                                  [--strict-brief] hard-fail on a brief missing
+                                  CLAIM / WHY GAP CAN EXIST / MEASURED / KILLS /
+                                  IF YOU APPROVE (the reopen posture)
   plan show --file <f>            Full plan, human-readable
   plan render-telegram --file <f> The approval message, commands verbatim
   plan schema                     JSON Schema for the plan
   plan from-run --run-id <id>     Extract the plan from a Hermes run (--out <f>)
   plan approve --file <f> --run-id <id>   Stamp from Hermes' recorded gate decision
+  plan after-gate --run-id <id>   What approving installed (monitors count + next step)
 
 PROVISION (deterministic; installs what an approved plan describes)
   provision dry-run --plan <f>    Print every file and command, write nothing
@@ -82,6 +86,12 @@ RESEARCH (paper only; edge detector, never an order)
                                   if the no-look-ahead sample is too small.
                                   --live-nowcast 3.42 --bucket 3.4 --as-of YYYY-MM-DD
                                   --json  (live fetch needs PM_DESK_LIVE_CPI=1)
+
+THESIS (loop back after a buildout ships)
+  thesis reopen --prior-run <id> --focus-token <id>
+                                  Pack a prior-run pointer + focus into the
+                                  workspace and print the run command for the
+                                  pm-thesis-reopen-v0 workflow. Paper only.
 
 GLOBAL FLAGS
   --home <dir>   Desk home (default $PM_DESK_HOME or ./data)
@@ -117,6 +127,8 @@ async function loadHandler(command: string): Promise<Handler | undefined> {
       return (await import('./commands/hermes.js')).hermesCommand;
     case 'research':
       return (await import('./commands/research.js')).researchCommand;
+    case 'thesis':
+      return (await import('./commands/thesis.js')).thesisCommand;
     default:
       return undefined;
   }
