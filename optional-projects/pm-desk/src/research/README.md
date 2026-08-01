@@ -46,6 +46,27 @@ nowcasts × prints  →  residuals (print - nowcast, no-look-ahead)
   else `no_trade`. `fail_closed` overrides everything when the sample is too
   small. The label is research only and is never an order.
 
+**Provenance — read this before citing a number.**
+
+A fixture run and a live run emit the same shape of result, and on 2026-07-31 a
+reopen ran the fixture path and reported `p_bucket ≈ 0.75` against a `0.425` mid.
+The live series said `0.38` — no trade. So every result carries:
+
+| Field | Meaning |
+|-------|---------|
+| `series_provenance` | `fixture` \| `live` \| `mixed` — where the two series came from |
+| `source_urls` | every public URL that contributed a row (empty for fixtures) |
+| `entry_eligible` | may this result be cited to justify monitors or a paper entry? |
+| `entry_block_reason` | one line saying why not, when it is false |
+| `paired_n` | no-look-ahead pairs actually joined (alias of `sample_size`) |
+| `data_plane_attempts` | every source-ladder rung tried, successes and failures |
+
+`entry_eligible` is false whenever provenance is `fixture`, whenever it is
+`mixed` without an explicit human `--allow-mixed-entry`, and whenever the run
+failed closed. `decision` is untouched by this — a fixture may still print
+`investigate_long`, it just is not allowed to mean anything. **A plan that cites
+a result with `entry_eligible: false` as its entry edge is invalid.**
+
 **CLI.**
 
 ```bash

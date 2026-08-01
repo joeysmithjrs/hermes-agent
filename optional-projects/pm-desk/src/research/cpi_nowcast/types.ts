@@ -67,10 +67,55 @@ export interface Buffer {
 /** The research-only decision label. NEVER an order. */
 export type Decision = 'no_trade' | 'investigate_long' | 'investigate_short' | 'fail_closed';
 
+/**
+ * Where the two series actually came from.
+ *
+ * This exists because a fixture run and a live run produce the same shape of
+ * number, and a desk that cannot tell them apart will eventually price a trade
+ * off a checked-in CSV. `fixture` means at least one series was read from disk;
+ * `live` means both nowcasts and prints came off a public endpoint this run;
+ * `mixed` means one of each.
+ */
+export type SeriesProvenance = 'fixture' | 'live' | 'mixed';
+
+/**
+ * One rung of the source ladder, recorded whether it worked or not.
+ *
+ * The point is not diagnostics — it is that "the data was unavailable" becomes
+ * a claim with evidence behind it. A single failed request is not an exhausted
+ * ladder, and the attempt log is what makes that checkable after the fact.
+ */
+export interface DataPlaneAttempt {
+  /** Stable rung id, e.g. `cleveland_nowcast_year_json`. */
+  source: string;
+  url: string;
+  ok: boolean;
+  /** HTTP status when the request completed, null when it never got that far. */
+  status: number | null;
+  /** Rows extracted on success. */
+  rows: number;
+  /** One-line failure reason on `ok: false`. */
+  error: string | null;
+}
+
 /** The strict-ish JSON shape emitted by the CLI. */
 export interface CalibrationResult {
   paper_only: true;
+  /** `fixture` | `live` | `mixed` — see {@link SeriesProvenance}. */
+  series_provenance: SeriesProvenance;
+  /** Every public URL that contributed a row to this result. Empty for fixtures. */
+  source_urls: string[];
+  /**
+   * Whether this result may be cited as entry evidence — i.e. may justify
+   * packaging monitors or a non-empty paper thesis. False for anything that
+   * touched a fixture, and false when the harness failed closed.
+   */
+  entry_eligible: boolean;
+  /** Why `entry_eligible` is false, in one line. Null when it is true. */
+  entry_block_reason: string | null;
   sample_size: number;
+  /** Alias of `sample_size`: no-look-ahead nowcast/print pairs actually joined. */
+  paired_n: number;
   residual_rmse: number;
   residual_mean: number;
   bucket: number;
@@ -82,5 +127,7 @@ export interface CalibrationResult {
   buffer: Buffer;
   decision: Decision;
   fail_reason: string | null;
+  /** Every source-ladder rung tried this run, in order. */
+  data_plane_attempts: DataPlaneAttempt[];
   notes: string[];
 }

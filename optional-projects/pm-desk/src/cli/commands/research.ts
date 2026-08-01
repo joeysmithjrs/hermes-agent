@@ -15,7 +15,12 @@ import {
   loadPrintsCsv,
 } from '../../research/cpi_nowcast/loaders/index.js';
 import { runCalibration } from '../../research/cpi_nowcast/index.js';
-import type { CalibrationResult, NowcastRow, PrintRow } from '../../research/cpi_nowcast/types.js';
+import type {
+  CalibrationResult,
+  NowcastRow,
+  PrintRow,
+  SeriesProvenance,
+} from '../../research/cpi_nowcast/types.js';
 import type { Flags } from '../args.js';
 import { emit } from '../output.js';
 
@@ -46,8 +51,15 @@ OPTIONAL MARKET + THRESHOLDS
   --model-haircut    Model-haircut buffer vs the mid (default 0.05)
 
 LIVE FETCH (opt-in; never run in hermetic tests; no credentials)
-  --fetch-cleveland  Live-fetch the latest Cleveland Fed nowcast (needs PM_DESK_LIVE_CPI=1)
+  --fetch-cleveland  Live-fetch the Cleveland Fed nowcast history (needs PM_DESK_LIVE_CPI=1)
   --fetch-bls        Live-fetch recent BLS CPI YoY prints (needs PM_DESK_LIVE_CPI=1)
+
+PROVENANCE
+  Every result carries series_provenance (fixture | live | mixed) and
+  entry_eligible. A fixture or mixed run is RESEARCH ONLY: it can never justify
+  packaging monitors or a paper entry, however good its numbers look.
+  --allow-mixed-entry  Human override letting a mixed run count as entry
+                       evidence. Not for agents to set on their own.
 
 OUTPUT
   --json             Emit the strict-ish CalibrationResult JSON
@@ -84,6 +96,7 @@ async function cpiCalibrate(flags: Flags): Promise<number> {
   const modelHaircut = Number(flags.str('model-haircut', '0.05')!);
   const fetchCleveland = flags.bool('fetch-cleveland');
   const fetchBls = flags.bool('fetch-bls');
+  const allowMixedEntry = flags.bool('allow-mixed-entry');
   flags.rejectUnknown('research cpi-calibrate');
 
   if (liveNowcastRaw === undefined) {
@@ -130,12 +143,26 @@ async function cpiCalibrate(flags: Flags): Promise<number> {
   }
 
   const notes: string[] = [];
+  const sourceUrls: string[] = [];
 
-  // Load fixture nowcasts/prints, then optionally overlay live rows.
+  // Load fixture nowcasts/prints, then optionally overlay live rows. Which of
+  // those two happened is what `series_provenance` reports, so track it as we go
+  // rather than inferring it from the flags afterwards: a --fetch-* that
+  // returned nothing usable is a fixture run, whatever the caller asked for.
   let nowcasts: NowcastRow[] = [];
   let prints: PrintRow[] = [];
-  if (nowcastPath) nowcasts = loadNowcastsCsv(nowcastPath);
-  if (printPath) prints = loadPrintsCsv(printPath);
+  let nowcastsFromFixture = false;
+  let nowcastsFromLive = false;
+  let printsFromFixture = false;
+  let printsFromLive = false;
+  if (nowcastPath) {
+    nowcasts = loadNowcastsCsv(nowcastPath);
+    nowcastsFromFixture = nowcasts.length > 0;
+  }
+  if (printPath) {
+    prints = loadPrintsCsv(printPath);
+    printsFromFixture = prints.length > 0;
+  }
 
   if (fetchCleveland) {
     if (!asOf) {
@@ -146,6 +173,7 @@ async function cpiCalibrate(flags: Flags): Promise<number> {
     const rows = await fetchClevelandNowcasts(asOf);
     if (rows.length > 0) {
       notes.push(`using ${rows.length} live Cleveland nowcast row(s)`);
+      nowcastsFromLive = true;
       nowcasts = [...nowcasts, ...rows];
     }
   }
@@ -153,6 +181,7 @@ async function cpiCalibrate(flags: Flags): Promise<number> {
     const rows = await fetchBlsYoy();
     if (rows.length > 0) {
       notes.push(`using ${rows.length} live BLS print row(s)`);
+      printsFromLive = true;
       // De-dup by refMonth, preferring the live row.
       const map = new Map<string, PrintRow>();
       for (const p of [...prints, ...rows]) map.set(p.refMonth, p);
@@ -177,6 +206,14 @@ async function cpiCalibrate(flags: Flags): Promise<number> {
     mid,
     minN,
     buffer: { halfSpread, modelHaircut },
+    seriesProvenance: classifyProvenance({
+      nowcastsFromFixture,
+      nowcastsFromLive,
+      printsFromFixture,
+      printsFromLive,
+    }),
+    sourceUrls,
+    allowMixedEntry,
     notes,
   });
 
@@ -184,9 +221,30 @@ async function cpiCalibrate(flags: Flags): Promise<number> {
   return 0;
 }
 
+/**
+ * `live` only when both series came off a public endpoint this run and neither
+ * was topped up from disk. Anything else is `mixed`, and disk-only is `fixture`.
+ */
+function classifyProvenance(flags: {
+  nowcastsFromFixture: boolean;
+  nowcastsFromLive: boolean;
+  printsFromFixture: boolean;
+  printsFromLive: boolean;
+}): SeriesProvenance {
+  const anyFixture = flags.nowcastsFromFixture || flags.printsFromFixture;
+  const anyLive = flags.nowcastsFromLive || flags.printsFromLive;
+  if (anyLive && !anyFixture) return 'live';
+  if (anyLive && anyFixture) return 'mixed';
+  return 'fixture';
+}
+
 function humanSummary(r: CalibrationResult): string {
   const lines = [
     '[PAPER ONLY] CPI nowcast → bucket calibration',
+    // Provenance goes first, above the numbers, because the numbers read the
+    // same either way and the reader needs to know which kind they are looking
+    // at before the p_bucket lands.
+    `  provenance       ${r.series_provenance}${r.entry_eligible ? '' : '  ← RESEARCH ONLY'}`,
     `  sample_size      ${r.sample_size} (min_n 12)`,
     `  residual mean    ${r.residual_mean.toFixed(3)}  rmse ${r.residual_rmse.toFixed(3)}`,
     `  live_nowcast     ${r.live_nowcast}  →  bucket ${r.bucket}`,
@@ -199,6 +257,15 @@ function humanSummary(r: CalibrationResult): string {
     );
   }
   lines.push(`  decision         ${r.decision}${r.fail_reason ? `  (${r.fail_reason})` : ''}`);
+  lines.push(
+    `  entry_eligible   ${r.entry_eligible}${r.entry_block_reason ? `  (${r.entry_block_reason})` : ''}`,
+  );
+  for (const a of r.data_plane_attempts) {
+    lines.push(
+      `  attempt          [${a.ok ? 'ok' : 'fail'}] ${a.source} ${a.status ?? '-'} ${a.ok ? `${a.rows} row(s)` : (a.error ?? '')}`,
+    );
+  }
+  for (const u of r.source_urls) lines.push(`  source           ${u}`);
   for (const n of r.notes) lines.push(`  note             ${n}`);
   return lines.join('\n');
 }
