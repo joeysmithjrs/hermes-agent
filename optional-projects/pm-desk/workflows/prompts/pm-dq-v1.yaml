@@ -68,6 +68,15 @@ prompt: |
   needs missing infra *after* Browserbase attempt / live-exec / blind copy.
   Soft reject: weak mechanism, toy book after you snapshot it, bad timeline.
 
+  DATA PLANE LAW (anti-laziness):
+  - Before rejecting on missing data, LIST what you tried: each URL, its HTTP
+    status, and the next ladder rung. A single failed curl is not an exhausted
+    ladder and is not a kill reason by itself.
+  - Forbidden: "PDF unreachable" / "nowcast unavailable" after one attempt.
+  - Forbidden: advancing a survivor whose entry edge rests on a fixture
+    calibration (entry_eligible false). Fixture numbers are research-only; they
+    cannot justify non-empty monitors or a paper_plan_candidate.
+
   SHIPPED TOOLS (already exist — RUN them, never re-propose building them):
     - cpi_nowcast_bucket_harness → `pm-desk research cpi-calibrate`
       If a survivor is a CPI bracket market, the quantitative step already
