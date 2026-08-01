@@ -392,14 +392,16 @@ describe('thesis reopen workflow', () => {
     ]);
   });
 
-  it('the plan node reuses the STRICT morning plan library — no freestyle reopen schema', () => {
+  it('the plan node uses a STRICT shipped library — no freestyle reopen schema', () => {
     // C3: the bespoke host reopen freestyled its own inline schema and the gate
-    // opened on an invalid plan. The productized reopen must use the same strict
-    // library the morning uses.
+    // opened on an invalid plan. The productized reopen uses a shipped library
+    // prompt (pm-reopen-plan-v1) that mirrors the morning's strict contract but
+    // references the reopen's nodes — the morning library cannot be reused
+    // verbatim because Hermes validates template node references.
     const doc = loadWorkflow(REOPEN_WORKFLOW_FILE);
     const plan = doc.nodes.find((n) => n.id === 'plan');
     const prompt = plan?.spec?.prompt;
-    expect(prompt && typeof prompt === 'object' && prompt.library).toBe('pm-execution-plan-v1');
+    expect(prompt && typeof prompt === 'object' && prompt.library).toBe('pm-reopen-plan-v1');
   });
 
   it('context and research use the dedicated reopen libraries', () => {
@@ -422,7 +424,11 @@ describe('thesis reopen workflow', () => {
         referenced.push(prompt.library);
       }
     }
-    expect(referenced).toEqual(['pm-reopen-context-v1', 'pm-reopen-research-v1', 'pm-execution-plan-v1']);
+    expect(referenced).toEqual([
+      'pm-reopen-context-v1',
+      'pm-reopen-research-v1',
+      'pm-reopen-plan-v1',
+    ]);
     expect(referenced.filter((name) => !shipped.has(name))).toEqual([]);
   });
 

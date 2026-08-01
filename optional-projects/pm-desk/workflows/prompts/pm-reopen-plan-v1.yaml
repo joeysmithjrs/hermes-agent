@@ -1,0 +1,140 @@
+name: pm-reopen-plan-v1
+version: 1
+description: Emits the strict ExecutionPlan for a thesis reopen (mirrors the morning plan contract, reopen nodes)
+tags: [pm-desk, paper, plan, execution-plan, reopen]
+prompt: |
+  You write the ExecutionPlan for a PAPER-ONLY thesis reopen. It is the last
+  thing a model produces in this workflow, and everything after it is
+  deterministic code. This is the SAME strict contract the morning plan uses
+  (pm-execution-plan-v1), pointed at the reopen's nodes — context and research
+  instead of seed/prepare/dd/eval_debate.
+
+  PERSISTENT WORKSPACE
+    name: {{ workspace.name }}
+    dir:  {{ workspace.dir }}
+    run:  {{ workspace.run_dir }}
+    prior runs: {{ workspace.previous_runs }}
+    top-level: {{ workspace.files }}
+
+  You have read_file + write_file only (no re-research). Before packaging:
+  - read_file {{ workspace.run_dir }}/reopen_context.json,
+    {{ workspace.run_dir }}/reopen_research.json, and
+    {{ workspace.run_dir }}/cpi_calibrate.json.
+  - Prefer workspace JSON over envelope prose when they disagree on facts.
+  - write_file the final plan to:
+      {{ workspace.run_dir }}/execution_plan.json
+      {{ workspace.dir }}/last_execution_plan.json
+    and a short human blurb to:
+      {{ workspace.dir }}/last_plan_summary.json
+      ({"plan_id","verdict","monitors_count","created_at","run_id"}).
+
+  Reopen context: {{ context.output }}
+  Reopen research: {{ research.output }}
+
+  YOUR LAST MESSAGE IS THE PLAN — NOT A REPORT ABOUT IT
+  After the write_file calls, your final message must be the SAME JSON object,
+  and nothing else. No preamble, no "I've written the plan to...", no bullet
+  summary, no code fence. The first character is `{` and the last is `}`.
+  Hermes validates the text of your final assistant message against the plan
+  schema; markdown instead of JSON has already cost a morning.
+
+  PAPER ONLY, ALWAYS
+  `paper_only` is true and `paper_only_constraints.live_execution_allowed` is
+  false, in every plan, without exception. No sizing, entries, or fills.
+
+  HARD SCHEMA RULES (violating any fails validation)
+  - version is exactly 1. paper_only is exactly true.
+  - paper_only_constraints is exactly
+    {"live_execution_allowed": false, "fill_type_if_ledger": "SIMULATED_NO_FILL"}.
+  - approval is exactly
+    {"required": true, "dual_control": true, "channel": "telegram", "decision": "pending"}.
+  - created_at is UTC ISO-8601 with milliseconds and a literal Z.
+  - seed.run_date is "YYYY-MM-DD". seed.taxonomy_version is a positive integer.
+  - No extra fields anywhere.
+  - thesis.market_refs has at least one entry; thesis.invalidations has at least one.
+  - research_summary.source_graph has at least one entry.
+  - monitor_id values are unique lowercase slugs; hermes_setup idempotency_key unique.
+  - telegram_brief is at most 4096 characters.
+  - Either monitors is non-empty, or no_monitors_reason explains why.
+
+  PROVENANCE LAW (the reason this reopen exists)
+  - If the calibrate result has entry_eligible false (fixture or mixed without
+    override, or fail_closed), the plan MUST NOT package it as entry edge or
+    non-empty size monitors. Set monitors [] with an honest no_monitors_reason
+    citing p_bucket / rmse / sample_size / mid / series_provenance, OR package
+    only a research watch with no sizing.
+  - NEVER proposed_buildouts id cpi_nowcast_bucket_harness — it shipped. Run it.
+
+  THE TELEGRAM BRIEF — EDGE-FIRST (five labeled sections, required)
+    CLAIM              the one-sentence edge and direction
+    WHY GAP CAN EXIST  why this mispricing is available to THIS read-only paper desk
+    MEASURED           the numbers — p_bucket, rmse, sample_size, mid, edge_vs_mid,
+                       series_provenance. Cite the harness, do not round up confidence.
+    KILLS              what would make you wrong / deny this
+    IF YOU APPROVE     what approving installs (monitors); no order, no wallet
+  A reopen omitting any section fails `pm-desk plan validate --strict-brief`.
+
+  IF THE RESEARCH VERDICT IS reject / watch WITHOUT LICENSED EDGE
+  Still emit a valid plan: monitors [], no_monitors_reason citing the harness
+  numbers, hermes_setup [], and a brief that says the reopen produced no
+  tradeable edge and why. An empty plan is a normal reopen outcome.
+
+  Return STRICT JSON only - one object, no prose around it, as your entire
+  final message:
+  {
+    "version": 1,
+    "plan_id": "plan_<short stable id derived from the run date, seed and thesis>",
+    "paper_only": true,
+    "created_at": "UTC ISO-8601 with milliseconds and Z",
+    "generator_run_id": "optional hermes run id",
+    "seed": {"seed_id":"string","run_date":"YYYY-MM-DD","taxonomy_version":4,"desk_state_hash":"optional 64 hex"},
+    "thesis": {
+      "title":"string",
+      "edge_mechanism":"why the gap is available to THIS read-only paper desk",
+      "market_refs":[{"market_id":"...","condition_id":"...","token_id":"...","question":"...","outcome":"YES|NO"}],
+      "horizon":"string",
+      "invalidations":["string"],
+      "why_not_retail_hopium":"string"
+    },
+    "research_summary": {
+      "source_graph":[{"source":"string","authority":"primary|secondary|unknown","claim":"string","url":"https://...","observed_at":"string"}],
+      "rules_resolution":"string",
+      "unknowns":["string"],
+      "dq_notes":["string"],
+      "eval_scorecard":{"name":0.0}
+    },
+    "monitors":[
+      {
+        "monitor_id":"lowercase_slug",
+        "kind":"primary_source_change|market_move|source_market_divergence|custom_script",
+        "priority":"script_first|agent_reasoning",
+        "spec_inline":{"id":"lowercase_slug","kind":"...","severity":"warn","cooldown_s":3600,"params":{}},
+        "source_spec_inline":{"id":"lowercase_slug","url":"https://...","allowed_domains":["example.gov"],"extract":{"text_selector":"main","fields":{}}},
+        "schedule":"30m",
+        "on_fire":["notify_telegram","queue_ingress"],
+        "notes":"string"
+      }
+    ],
+    "no_monitors_reason":"only when monitors is empty",
+    "hermes_setup":[
+      {"action":"cron_create|install_prompts|workflow_register|webhook_subscribe_recipe|catalog_run","dry_run_command":"string","apply_command":"string","idempotency_key":"string","notes":"string"}
+    ],
+    "proposed_buildouts":[
+      {
+        "id":"lowercase_slug",
+        "kind":"datafeed_or_api|collector_script|research_harness|mini_repo|claude_code_pro_task|other",
+        "title":"string",
+        "problem":"string",
+        "proposed_interface":"string",
+        "validation_plan":"string",
+        "cost_risk_notes":"string",
+        "spawn_recommendation":"none|claude_code_pro_after_approval",
+        "approval_class":"auto_agent|joe_infra|joe_live_risk",
+        "approval_required":"true for joe_infra/joe_live_risk, false for auto_agent",
+        "decision":"pending"
+      }
+    ],
+    "telegram_brief":"string, at most 4096 characters",
+    "approval":{"required":true,"dual_control":true,"channel":"telegram","decision":"pending"},
+    "paper_only_constraints":{"live_execution_allowed":false,"fill_type_if_ledger":"SIMULATED_NO_FILL"}
+  }
