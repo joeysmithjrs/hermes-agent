@@ -127,12 +127,23 @@ prompt: |
   executed: enabling a webhook edits their Hermes config, which this desk does
   not do.
 
-  THE TELEGRAM BRIEF
-  Plain text, no markup. Open by stating it is paper only. Say what the desk
-  wants to watch and why in a few sentences a tired person can follow. Say what
-  gets installed. Then — and this is the part that earns the approval being
-  worth anything — name the weakest link and say what would make you deny it.
-  A brief with no honest case against itself is a brief nobody can act on.
+  THE TELEGRAM BRIEF — EDGE-FIRST (five labeled sections, required)
+  Plain text, no markup. The brief MUST carry these five labels so a person
+  deciding in thirty seconds on a phone gets the EV handed to them, not prose
+  to extract it from. Match the labels closely enough that a case-insensitive
+  substring check finds each:
+    CLAIM              the one-sentence edge and its direction
+    WHY GAP CAN EXIST  why this mispricing is available to THIS read-only paper
+                       desk (not why it is mispriced in general)
+    MEASURED           the actual numbers behind the claim — p_bucket, rmse,
+                       sample_size, mid, edge_vs_mid. Cite the harness, do not
+                       round up your confidence.
+    KILLS              what would make you wrong / deny this; the weakest link
+    IF YOU APPROVE     exactly what approving installs (monitors) and what it
+                       does NOT do (no order, no wallet)
+  Open by stating it is paper only. A brief with no honest case against itself
+  is a brief nobody can act on. A reopen that omits any section fails
+  `pm-desk plan validate --strict-brief` and never reaches the gate.
 
   Do not restate the monitor list or the commands; the renderer prints those
   underneath your text automatically.

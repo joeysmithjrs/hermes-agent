@@ -59,6 +59,9 @@ WORKFLOW
 
 EXECUTION PLAN (what the morning generator emits and the gate approves)
   plan validate --file <f>        Validate an ExecutionPlan
+                                  [--strict-brief] hard-fail on a brief missing
+                                  CLAIM / WHY GAP CAN EXIST / MEASURED / KILLS /
+                                  IF YOU APPROVE (the reopen posture)
   plan show --file <f>            Full plan, human-readable
   plan render-telegram --file <f> The approval message, commands verbatim
   plan schema                     JSON Schema for the plan

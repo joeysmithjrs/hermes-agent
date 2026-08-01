@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { UsageError } from '../../core/errors.js';
 import { resolveHermesHome } from '../../hermes/prompts.js';
 import { DEFAULT_GATE_ID, readGateSignal, stampApproval } from '../../plan/approval.js';
+import { briefWarning, checkPlanBrief } from '../../plan/brief.js';
 import { DEFAULT_PLAN_NODE_ID, DEFAULT_WORKSPACE, planFromRun } from '../../plan/from-run.js';
 import { renderPlanSummary, renderPlanTelegram } from '../../plan/render.js';
 import {
@@ -27,8 +28,23 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
   switch (sub) {
     case 'validate': {
       const file = flags.required('file', 'Path to an ExecutionPlan JSON file.');
+      const strictBrief = flags.bool('strict-brief');
       flags.rejectUnknown('plan validate');
       const plan = readPlan(file);
+      const brief = checkPlanBrief(plan);
+
+      // --strict-brief is the reopen posture: a brief missing an edge-first
+      // section is a hard failure, not a warning. Without it (the morning
+      // posture) the missing sections are surfaced but the plan still validates.
+      if (strictBrief && !brief.ok) {
+        throw new UsageError(
+          `telegram_brief is missing edge-first section(s): ${brief.missing.join(', ')}`,
+          {
+            hint: 'A reopen brief must carry CLAIM / WHY GAP CAN EXIST / MEASURED / KILLS / IF YOU APPROVE.',
+          },
+        );
+      }
+
       emit(
         { json },
         {
@@ -39,6 +55,9 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
           monitors: plan.monitors.length,
           hermes_setup: plan.hermes_setup.length,
           approval: plan.approval.decision,
+          brief_ok: brief.ok,
+          brief_missing: brief.missing,
+          strict_brief: strictBrief,
         },
         () =>
           [
@@ -48,6 +67,9 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
             `  monitors                ${plan.monitors.length}`,
             `  hermes_setup            ${plan.hermes_setup.length}`,
             `  approval                ${plan.approval.decision}`,
+            brief.ok
+              ? '  brief                  edge-first sections present'
+              : `  brief                  ⚠ missing: ${brief.missing.join(', ')}`,
           ].join('\n'),
       );
       return 0;
@@ -66,7 +88,13 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
       flags.rejectUnknown('plan render-telegram');
       const plan = readPlan(file);
       const text = renderPlanTelegram(plan);
-      emit({ json }, { text, chars: text.length, paper_only: true }, () => text);
+      // Soft warn (stderr) when the brief lacks the edge-first sections, so a
+      // rendered brief that is not decision-ready is flagged without polluting
+      // the Telegram message Joe approves. Hard enforcement lives in `validate
+      // --strict-brief`.
+      const warning = briefWarning(plan);
+      if (warning) process.stderr.write(`${warning}\n`);
+      emit({ json }, { text, chars: text.length, paper_only: true, brief_ok: warning === null }, () => text);
       return 0;
     }
 
@@ -156,7 +184,7 @@ export async function planCommand(sub: string | undefined, flags: Flags): Promis
 
     default:
       throw new UsageError(`unknown \`plan\` subcommand: ${sub ?? '(none)'}`, {
-        hint: 'Try: pm-desk plan validate --file <f> | plan show | plan render-telegram | plan schema | plan from-run --run-id <id> | plan approve --file <f> --run-id <id>',
+        hint: 'Try: pm-desk plan validate --file <f> [--strict-brief] | plan show | plan render-telegram | plan schema | plan from-run --run-id <id> | plan approve --file <f> --run-id <id>',
       });
   }
 }
