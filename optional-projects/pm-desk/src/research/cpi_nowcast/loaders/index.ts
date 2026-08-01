@@ -11,7 +11,8 @@ import { readFileSync } from 'node:fs';
 import { UsageError } from '../../../core/errors.js';
 import type { NowcastRow, PrintRow } from '../types.js';
 
-export { fetchClevelandNowcasts, fetchBlsYoy } from './http.js';
+export { fetchClevelandLadder, fetchBlsLadder } from './http.js';
+export { parseNowcastYearJson } from './cleveland_year_json.js';
 
 /** Parse a `YYYY-MM` reference month and validate it. */
 function parseRefMonth(value: string, source: string): string {

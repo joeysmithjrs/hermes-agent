@@ -9,14 +9,15 @@
 
 import { UsageError } from '../../core/errors.js';
 import {
-  fetchBlsYoy,
-  fetchClevelandNowcasts,
+  fetchBlsLadder,
+  fetchClevelandLadder,
   loadNowcastsCsv,
   loadPrintsCsv,
 } from '../../research/cpi_nowcast/loaders/index.js';
 import { runCalibration } from '../../research/cpi_nowcast/index.js';
 import type {
   CalibrationResult,
+  DataPlaneAttempt,
   NowcastRow,
   PrintRow,
   SeriesProvenance,
@@ -33,7 +34,7 @@ bucket, then optionally compares that to a Polymarket mid.
 USAGE
   pm-desk research cpi-calibrate \\
     --nowcasts <csv> --prints <csv> \\
-    --as-of YYYY-MM-DD --live-nowcast 3.42 --bucket 3.4 \\
+    --live-nowcast 3.42 --bucket 3.4 \\
     [--mid 0.43] [--min-n 12] [--half-spread 0.01] [--model-haircut 0.05] \\
     [--json]
 
@@ -42,7 +43,7 @@ INPUTS
   --prints   <csv>   CSV with columns: ref_month, release_date, yoy
   --live-nowcast     The live nowcast used as the calibration anchor (e.g. 3.42)
   --bucket           The one-decimal contract bucket to score (e.g. 3.4)
-  --as-of YYYY-MM-DD Vintage date for live fetches (used by --fetch-* only)
+  --as-of YYYY-MM-DD Accepted for compatibility; unused (the live feed is self-dated)
 
 OPTIONAL MARKET + THRESHOLDS
   --mid              Polymarket mid for the bucket contract (skip for model-only)
@@ -50,9 +51,19 @@ OPTIONAL MARKET + THRESHOLDS
   --half-spread      Half-spread buffer vs the mid (default 0.01)
   --model-haircut    Model-haircut buffer vs the mid (default 0.05)
 
-LIVE FETCH (opt-in; never run in hermetic tests; no credentials)
-  --fetch-cleveland  Live-fetch the Cleveland Fed nowcast history (needs PM_DESK_LIVE_CPI=1)
-  --fetch-bls        Live-fetch recent BLS CPI YoY prints (needs PM_DESK_LIVE_CPI=1)
+LIVE FETCH — boil-the-ocean ladder (opt-in; never run in hermetic tests; no
+credentials; every rung recorded in data_plane_attempts win or lose)
+  --fetch-cleveland  Nowcasts (~150 reference months) + prints:
+                       1. nowcast_year.json feed (primary; the page itself
+                          renders from this)
+                       2. HTML page scrape, current month only (best-effort
+                          fallback; the page is client-rendered from #1, so
+                          this rung legitimately may find nothing)
+                     Needs PM_DESK_LIVE_CPI=1.
+  --fetch-bls        Prints fallback: BLS public API, reached when the
+                     Cleveland feed's own Actual-print series is empty for a
+                     reference month (BLS has not released it yet).
+                     Needs PM_DESK_LIVE_CPI=1.
 
 PROVENANCE
   Every result carries series_provenance (fixture | live | mixed) and
@@ -90,7 +101,7 @@ async function cpiCalibrate(flags: Flags): Promise<number> {
   const liveNowcastRaw = flags.str('live-nowcast');
   const bucketRaw = flags.str('bucket');
   const midRaw = flags.str('mid');
-  const asOf = flags.str('as-of');
+  flags.str('as-of'); // accepted for compatibility; the live ladder is self-dated by the feed
   const minN = flags.int('min-n', 12)!;
   const halfSpread = Number(flags.str('half-spread', '0.01')!);
   const modelHaircut = Number(flags.str('model-haircut', '0.05')!);
@@ -144,6 +155,7 @@ async function cpiCalibrate(flags: Flags): Promise<number> {
 
   const notes: string[] = [];
   const sourceUrls: string[] = [];
+  const dataPlaneAttempts: DataPlaneAttempt[] = [];
 
   // Load fixture nowcasts/prints, then optionally overlay live rows. Which of
   // those two happened is what `series_provenance` reports, so track it as we go
@@ -165,38 +177,52 @@ async function cpiCalibrate(flags: Flags): Promise<number> {
   }
 
   if (fetchCleveland) {
-    if (!asOf) {
-      throw new UsageError('--fetch-cleveland requires --as-of YYYY-MM-DD', {
-        hint: 'The as-of date anchors the live nowcast vintage.',
-      });
-    }
-    const rows = await fetchClevelandNowcasts(asOf);
-    if (rows.length > 0) {
-      notes.push(`using ${rows.length} live Cleveland nowcast row(s)`);
+    // Boil-the-ocean ladder: the JSON feed the nowcasting page itself renders
+    // from (rung 1, ~150 reference months), falling back to a best-effort HTML
+    // scrape of the page for the current month only (rung 2). Every rung is
+    // recorded whether it worked or not — a single failed request is never
+    // treated as an exhausted ladder.
+    const ladder = await fetchClevelandLadder();
+    dataPlaneAttempts.push(...ladder.attempts);
+    for (const attempt of ladder.attempts) if (attempt.ok) sourceUrls.push(attempt.url);
+    if (ladder.nowcasts.length > 0) {
+      notes.push(`using ${ladder.nowcasts.length} live Cleveland nowcast row(s)`);
       nowcastsFromLive = true;
-      nowcasts = [...nowcasts, ...rows];
+      nowcasts = [...nowcasts, ...ladder.nowcasts];
+    }
+    if (ladder.prints.length > 0) {
+      notes.push(`using ${ladder.prints.length} live Cleveland print row(s) (Actual CPI Inflation)`);
+      printsFromLive = true;
+      prints = [...prints, ...ladder.prints];
     }
   }
   if (fetchBls) {
-    const rows = await fetchBlsYoy();
-    if (rows.length > 0) {
-      notes.push(`using ${rows.length} live BLS print row(s)`);
+    // Fallback rung for prints: only reached when the Cleveland feed's own
+    // `Actual CPI Inflation` series has not been populated for a reference
+    // month yet (BLS has not released), or the caller wants BLS regardless.
+    const ladder = await fetchBlsLadder();
+    dataPlaneAttempts.push(...ladder.attempts);
+    for (const attempt of ladder.attempts) if (attempt.ok) sourceUrls.push(attempt.url);
+    if (ladder.prints.length > 0) {
+      notes.push(`using ${ladder.prints.length} live BLS print row(s)`);
       printsFromLive = true;
-      // De-dup by refMonth, preferring the live row.
+      // De-dup by refMonth, preferring the live row already collected (Cleveland
+      // over BLS, since it was tried first) unless BLS is the only one that had
+      // this reference month at all.
       const map = new Map<string, PrintRow>();
-      for (const p of [...prints, ...rows]) map.set(p.refMonth, p);
+      for (const p of [...ladder.prints, ...prints]) map.set(p.refMonth, p);
       prints = [...map.values()];
     }
   }
 
   if (nowcasts.length === 0) {
-    throw new UsageError('no nowcast rows available', {
-      hint: 'Pass --nowcasts <csv>, or --fetch-cleveland with PM_DESK_LIVE_CPI=1.',
+    throw new UsageError('no nowcast rows available after exhausting the ladder', {
+      hint: `Pass --nowcasts <csv>, or --fetch-cleveland with PM_DESK_LIVE_CPI=1.${attemptsHint(dataPlaneAttempts)}`,
     });
   }
   if (prints.length === 0) {
-    throw new UsageError('no print rows available', {
-      hint: 'Pass --prints <csv>, or --fetch-bls with PM_DESK_LIVE_CPI=1.',
+    throw new UsageError('no print rows available after exhausting the ladder', {
+      hint: `Pass --prints <csv>, or --fetch-cleveland / --fetch-bls with PM_DESK_LIVE_CPI=1.${attemptsHint(dataPlaneAttempts)}`,
     });
   }
 
@@ -213,12 +239,27 @@ async function cpiCalibrate(flags: Flags): Promise<number> {
       printsFromLive,
     }),
     sourceUrls,
+    dataPlaneAttempts,
     allowMixedEntry,
     notes,
   });
 
   emit({ json }, result, () => humanSummary(result));
   return 0;
+}
+
+/**
+ * Render every ladder rung tried, success or failure, as part of a usage-error
+ * hint. "The data was unavailable" must come with the receipts: which URLs
+ * were hit, their status, and why each one came up empty — not a claim taken
+ * on faith after a single request.
+ */
+function attemptsHint(attempts: readonly DataPlaneAttempt[]): string {
+  if (attempts.length === 0) return '';
+  const lines = attempts.map(
+    (a) => `\n  [${a.ok ? 'ok' : 'fail'}] ${a.source} ${a.url} status=${a.status ?? '-'} ${a.ok ? `rows=${a.rows}` : (a.error ?? '')}`,
+  );
+  return ` Ladder attempts:${lines.join('')}`;
 }
 
 /**
