@@ -205,64 +205,55 @@ describe('workflow capability boundary', () => {
     expect(violations).toEqual([]);
   });
 
-  it('research/browser tools stay inside the generator; scout + debate can browse', () => {
+  it('keeps X and expensive browser recovery out of the primary morning pass', () => {
     const browser = ['browser_navigate', 'browser_snapshot', 'browser_click', 'browser_scroll'];
     const withBrowser: string[] = [];
-    const webish = ['web_search', 'web_extract', 'x_search', 'terminal'];
-    const withWebish: string[] = [];
+    const withX: string[] = [];
+    const withTerminal: string[] = [];
 
     for (const file of ALL_WORKFLOWS) {
       for (const { id, spec } of agentSpecs(loadWorkflow(file))) {
         const tools = spec.tools ?? [];
         if (tools.some((t) => browser.includes(t))) withBrowser.push(`${file}:${id}`);
-        if (tools.some((t) => webish.includes(t))) withWebish.push(`${file}:${id}`);
+        if (tools.includes('x_search')) withX.push(`${file}:${id}`);
+        if (tools.includes('terminal')) withTerminal.push(`${file}:${id}`);
       }
     }
-    // Directive, DQ, DD, and debate council may research; no other workflow may.
     const gen = GENERATOR_WORKFLOW_FILE;
-    expect(withBrowser).toEqual(expect.arrayContaining([`${gen}:dd`, `${gen}:dq`]));
-    expect(withBrowser.every((x) => x.startsWith(gen))).toBe(true);
-    expect(withBrowser.some((x) => x.includes('eval_debate'))).toBe(true);
-    expect(withWebish).toEqual(
-      expect.arrayContaining([
-        `${gen}:dd`,
-        `${gen}:dq`,
-        `${gen}:directive.branch`,
-      ]),
-    );
-    expect(withWebish.some((x) => x.includes('eval_debate'))).toBe(true);
-    expect(withWebish.every((x) => x.startsWith(gen))).toBe(true);
+    // Only DD may recover a blocked primary source; scouting and council are
+    // bounded to web results plus persisted artifacts.
+    expect(withBrowser).toEqual([`${gen}:dd`]);
+    expect(withTerminal).toEqual([`${gen}:dd`]);
+    expect(withX).toEqual([]);
   });
 
-  it('debate council shares scout tools; plan is workspace read/write only', () => {
-    const specs = agentSpecs(loadWorkflow(GENERATOR_WORKFLOW_FILE));
+  it('uses a bounded two-person vote; plan is workspace read/write only', () => {
+    const doc = loadWorkflow(GENERATOR_WORKFLOW_FILE);
+    const specs = agentSpecs(doc);
     const byId = new Map(specs.map((s) => [s.id, s]));
-    const scoutCore = [
-      'web_search',
-      'web_extract',
-      'x_search',
-      'read_file',
-      'write_file',
-      'terminal',
-      'browser_navigate',
-      'browser_snapshot',
-    ];
     const debateAgents = specs.filter((s) => s.id.startsWith('eval_debate.'));
-    expect(debateAgents.length).toBeGreaterThanOrEqual(3);
+    expect(debateAgents.map(({ id }) => id)).toEqual([
+      'eval_debate.participant.bull',
+      'eval_debate.participant.bear',
+    ]);
     for (const { id, spec } of debateAgents) {
-      for (const t of scoutCore) {
-        expect(spec.tools, `${id} missing ${t}`).toEqual(expect.arrayContaining([t]));
-      }
+      expect(spec.tools, `${id} must read/write evidence`).toEqual(
+        expect.arrayContaining(['web_search', 'web_extract', 'read_file', 'write_file']),
+      );
+      expect(spec.tools).not.toEqual(expect.arrayContaining(['x_search', 'terminal', 'browser_navigate']));
     }
+    const debate = (doc.nodes as (DebateishNode & {
+      protocol?: string;
+      max_rounds?: number;
+    })[]).find((node) => node.id === 'eval_debate');
+    expect(debate?.protocol).toBe('vote');
+    expect(debate?.max_rounds).toBe(1);
+    expect(debate?.directive?.judge).toBeUndefined();
     const planTools = byId.get('plan')?.spec.tools ?? [];
     expect(planTools).toEqual(expect.arrayContaining(['read_file', 'write_file']));
-    expect(planTools).not.toEqual(
-      expect.arrayContaining(['terminal', 'web_search', 'browser_navigate']),
-    );
+    expect(planTools).not.toEqual(expect.arrayContaining(['terminal', 'web_search', 'browser_navigate']));
     const prepareTools = byId.get('prepare')?.spec.tools ?? [];
-    expect(prepareTools).toEqual(
-      expect.arrayContaining(['read_file', 'write_file', 'session_search']),
-    );
+    expect(prepareTools).toEqual(expect.arrayContaining(['read_file', 'write_file', 'session_search']));
   });
 
   it('generator pins the persistent pm-desk workspace', () => {
@@ -270,35 +261,32 @@ describe('workflow capability boundary', () => {
     expect(doc.workspace).toBe('pm-desk');
   });
 
-  it('the generator pins diverse models without per-agent thrift caps', () => {
+  it('caps the primary morning run and keeps premium escalation out of the graph', () => {
     const raw = readFileSync(packageWorkflowPath(GENERATOR_WORKFLOW_FILE), 'utf8');
     const doc = parseYaml(raw) as {
       max_budget_usd?: number;
-      nodes: { id: string; kind: string; spec?: { model?: string; max_turns?: number; budget_usd?: number }; participants?: { spec?: { model?: string; max_turns?: number; budget_usd?: number } }[]; directive?: { judge?: { spec?: { model?: string; max_turns?: number; budget_usd?: number } }; judge_model?: string } }[];
+      nodes: { id: string; kind: string; spec?: { model?: string; provider?: string; max_turns?: number; budget_usd?: number }; participants?: { spec?: { model?: string; provider?: string; max_turns?: number; budget_usd?: number } }[]; directive?: { judge?: unknown; judge_model?: string } }[];
     };
-    // Make-it-work first: no workflow thrift kill required; if present must not be toy.
-    if (doc.max_budget_usd !== undefined && doc.max_budget_usd !== null) {
-      expect(doc.max_budget_usd).toBeGreaterThanOrEqual(10);
-    }
+    expect(doc.max_budget_usd).toBe(3);
     const models = new Set<string>();
+    const providers = new Set<string>();
     for (const n of doc.nodes) {
       if (n.spec?.model) models.add(n.spec.model);
+      if (n.spec?.provider) providers.add(n.spec.provider);
       for (const p of n.participants ?? []) {
         if (p.spec?.model) models.add(p.spec.model);
+        if (p.spec?.provider) providers.add(p.spec.provider);
       }
-      if (n.directive?.judge?.spec?.model) models.add(n.directive.judge.spec.model);
-      if (n.directive?.judge_model) models.add(n.directive.judge_model);
+      expect(n.directive?.judge).toBeUndefined();
+      expect(n.directive?.judge_model).toBeUndefined();
     }
-    // No per-agent turn/budget thrift caps on any agent-bearing spec.
     for (const { id, spec } of agentSpecs(loadWorkflow(GENERATOR_WORKFLOW_FILE))) {
       expect(spec, id).not.toHaveProperty('max_turns');
       expect(spec, id).not.toHaveProperty('budget_usd');
     }
-    // Diversity floor: at least four distinct model ids in the morning graph.
-    expect(models.size).toBeGreaterThanOrEqual(4);
-    // Critical tier must appear somewhere (terra and/or sonnet).
-    const joined = [...models].join(' ');
-    expect(/terra|sonnet/i.test(joined)).toBe(true);
+    expect(models).toEqual(new Set(['z-ai/glm-5.2', 'moonshotai/kimi-k2.5', 'openai/gpt-5.4-mini']));
+    expect(providers).toEqual(new Set(['openrouter']));
+    expect(raw).not.toMatch(/grok-4\.5|xai-oauth|gpt-5\.6-terra|claude-sonnet-5/);
   });
 
   it('the generator ends at a dual-control telegram gate', () => {

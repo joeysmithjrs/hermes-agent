@@ -10,25 +10,24 @@
 #   generate → approve → provision → monitor → notify → record
 #
 # ---------------------------------------------------------------------------
-# MODEL / SPEND TIER (Joe 2026-07-31)
+# MODEL / SPEND TIER (cost-controlled; 2026-08-02)
 #
-# Experiment-grade morning: make it work first, optimize cost later.
-# No per-agent max_turns / budget_usd. Roles are diverse on purpose
-# (different labs/routers), critical judgement on terra / sonnet:
+# The former experiment-grade graph spent an unbounded SuperGrok quota: four
+# Grok directive scouts plus a Grok risk voter, each with X search and full
+# browser tooling, and a two-round three-member council. That is the expensive
+# failure mode. This production default is deliberately narrow:
 #
-#   prepare      z-ai/glm-5.1              OR        cheap-strong context pack
-#   directive×N  grok-4.5                  xai-oauth SuperGrok (NOT OpenRouter)
-#   dq           gpt-5.6-terra             OR        hard filters (critical)
-#   dd           moonshotai/kimi-k2.5      OR        long research + tools
-#   eval_debate  glm + kimi + grok         mixed     council WITH scout tools
-#     risk       grok-4.5                  xai-oauth SuperGrok
-#     judge      anthropic/claude-sonnet-5 OR        critical chair (critical)
-#   plan         gpt-5.6-terra             OR        ExecutionPlan JSON (critical)
+#   prepare      z-ai/glm-5.2              OR        local context / dedupe
+#   directive×2  z-ai/glm-5.2              OR        bounded scouting
+#   dq + dd      z-ai/glm-5.2              OR        sequential evidence gate
+#   eval_debate  GLM bull + Kimi bear      OR        one round; no chair by default
+#   plan         openai/gpt-5.4-mini       OR        compact schema packaging
 #
-# Grok nodes MUST use provider: xai-oauth + bare model id `grok-4.5` so they
-# bill SuperGrok subscription (hermes auth add xai-oauth). OpenRouter `x-ai/...`
-# is a different route and should not be used for those nodes.
-# Other nodes use openrouter. Bare terra ids follow local OR convention.
+# Escalate manually to a separate deep-review run only when this workflow
+# produces a single monitor-ready survivor. The global GPT-5.4 fallback is for
+# provider/model failures, not a routine expensive second opinion. x_search is
+# intentionally omitted while the xAI account is rate-limited; web_search and
+# primary sources remain available.
 # ---------------------------------------------------------------------------
 # SEED MODE (Joe 2026-07-31) — mission_x_arena
 #
@@ -79,21 +78,32 @@ version: 3
 # NOT a bind of this package directory.
 workspace: pm-desk
 
-# No per-node turn/budget caps (Joe: make it work first; SuperGrok absorbs Grok).
-# Optional workflow ceiling left unset — do not thrift-starve research mornings.
+# Hard run circuit breaker. The old graph had no dollar ceiling, so a retry or
+# verbose tool loop could consume subscription quota without a stop condition.
+# $3 is enough for the bounded primary pass; deeper review is an explicit
+# separate decision, not an accidental retry.
+max_budget_usd: 3.00
 
 defaults:
-  timeout_s: 900
+  timeout_s: 600
   # Provider for every pinned model unless a node overrides.
   # (Nodes set model explicitly; provider repeated for clarity/isolation.)
 
-# Reused tool grants (YAML anchors). Scout stages + debate council share the
-# same research surface so the council can re-check markets/sources instead of
-# rubber-stamping DD prose. write_file is workspace-artifact only (prompt law).
+# Reused tool grants (YAML anchors). The primary morning pass uses the public
+# web and workspace evidence only. X is a high-volume optional signal source,
+# not a dependency; it stays out until its account is healthy and a separately
+# budgeted deep-review run explicitly needs it. Browser/terminal tool loops are
+# also withheld from routine scouts; only DD may re-open a blocked primary
+# source through the package CLI.
 x-scout-tools: &scout_tools
   - web_search
   - web_extract
-  - x_search
+  - read_file
+  - write_file
+
+x-dd-tools: &dd_tools
+  - web_search
+  - web_extract
   - read_file
   - write_file
   - terminal
@@ -116,13 +126,13 @@ nodes:
   - id: prepare
     kind: agent
     spec:
-      model: z-ai/glm-5.1
+      model: z-ai/glm-5.2
       provider: openrouter
       prompt:
         library: pm-prepare-context-v1
       tools: *context_tools
   # Cards compiled outside the workflow:
-  #   pm-desk taxonomy compile --mode mission_x_arena --max-cards 3 --json
+  #   pm-desk taxonomy compile --mode mission_x_arena --max-cards 2 --json
   - id: seed
     kind: script
     run: workflow.examples.echo
@@ -131,9 +141,10 @@ nodes:
       directive_cards: '{{ input.directive_cards }}'
       seed: '{{ input.seed }}'
 
-  # --- one mission, one arena per branch (Grok) ---------------------------
-  # Tools: web + X + pm-desk helpers via terminal (discover markets, peek store)
-  # + write_file into the shared workspace run_dir.
+  # --- one mission, one arena per branch (bounded GLM scouts) -------------
+  # Routine scouts use public web plus workspace artifacts only. Their job is
+  # to produce a terse, source-linked candidate note—not recursively research
+  # every lead. Tool-heavy source recovery happens once in DD, after DQ.
   #
   # The branch prompt reads `{{ branch.directive }}` and `{{ branch.arena_label }}`
   # off the card itself; `params.template` is only the card id, used for the
@@ -142,47 +153,42 @@ nodes:
   - id: directive
     kind: fanout
     over: '{{ seed.output.echo.directive_cards }}'
-    max_branches: 4
+    max_branches: 2
     branch:
       kind: agent
       spec:
-        model: grok-4.5
-        provider: xai-oauth
+        model: z-ai/glm-5.2
+        provider: openrouter
         prompt:
           library: pm-directive-v1
           params:
             template: '{{ branch.card_id }}'
         tools: *scout_tools
-  # --- hard DQ (Terra) — critical; open sources/markets before killing -----
-  # Browserbase is NOT a workflow-native tool — it's a pm-desk CLI flag on
-  # `source collect --live`. Hermes `browser_*` covers ordinary pages; PDFs
-  # and hard CDN blocks may still need Browserbase via terminal + --home.
+  # --- hard DQ (GLM) — kill thin leads before expensive recovery -----------
   - id: dq
     kind: agent
     spec:
-      model: gpt-5.6-terra
+      model: z-ai/glm-5.2
       provider: openrouter
       prompt:
         library: pm-dq-v1
       tools: *scout_tools
-  # --- deep research (Kimi) — MUST verify markets + primary docs for real --
-  # NOTE: spec.tools is a toolset subset grant, not a true ACL; sibling tools
-  # in the same toolset may appear. No trading/signing tools exist in-package.
+  # --- focused DD (GLM) — one source-recovery pass after DQ ----------------
+  # Browserbase is only reachable through the package CLI / terminal here and
+  # is reserved for a blocked primary source, not general browsing.
   - id: dd
     kind: agent
     spec:
-      model: moonshotai/kimi-k2.5
+      model: z-ai/glm-5.2
       provider: openrouter
       prompt:
         library: pm-dd-v1
-      tools: *scout_tools
-  # --- adversarial council (diverse) + Sonnet chair (critical) ------------
-  # Same tool surface as DQ/DD so the council can re-open workspace artifacts,
-  # markets, and primary sources instead of arguing only from envelope text.
+      tools: *dd_tools
+  # --- one-round adversarial review; no premium chair in the default path ---
   - id: eval_debate
     kind: debate
-    protocol: judge_escalate
-    max_rounds: 2
+    protocol: vote
+    max_rounds: 1
     directive:
       topic: "Which paper thesis (if any) is worth packaging into an ExecutionPlan for Joe to approve this morning?"
       objective: >
@@ -193,69 +199,11 @@ nodes:
         or overturning upstream kill reasons. PAPER ONLY — no live execution.
       vote_key: verdict
       threshold: 2
-      judge_model: anthropic/claude-sonnet-5
-      judge_provider: openrouter
-      judge:
-        id: chair
-        kind: agent
-        spec:
-          model: anthropic/claude-sonnet-5
-          provider: openrouter
-          tools: *scout_tools
-          prompt: |
-            You are the desk chair. The council did not converge after the
-            allowed rounds. PAPER ONLY desk — no orders, no wallets.
-
-            WORKSPACE (persistent):
-              name: {{ workspace.name }}
-              dir:  {{ workspace.dir }}
-              this run: {{ workspace.run_dir }}
-              prior runs: {{ workspace.previous_runs }}
-              top-level files: {{ workspace.files }}
-
-            Topic: {{ branch.topic }}
-            Objective: {{ branch.objective }}
-            Full transcript: {{ branch.transcript }}
-
-            Desk context (prepare): {{ prepare.output }}
-            DD dossiers: {{ dd.output }}
-
-            Before deciding, use tools:
-            1. read_file under {{ workspace.run_dir }}/ (desk_state, candidates,
-               dq.json, dd.json, any council notes).
-            2. If a kill rests on "no market / PDF unreachable", re-run pm-desk
-               discover/snapshot and Browserbase collect with
-               DESK_HOME={{ workspace.run_dir }}/desk-home before agreeing.
-            3. write_file your decision to
-               {{ workspace.run_dir }}/eval_chair.json
-
-            Decide one of:
-              - advance_one — name the single best thesis and why monitors can catch it
-              - reject_all — nothing is monitor-ready this morning
-
-            Prefer reject_all when evidence is thin, unverified, or retail-hopium.
-
-            DATA PLANE LAW: a thesis whose entry edge rests on a fixture
-            calibration (entry_eligible false) is not advanceable — kill it. A
-            kill that rests on "no market / PDF unreachable" is not valid unless
-            the council re-ran the data plane (pm-desk discover/snapshot, the
-            shipped cpi-calibrate harness, Browserbase) and the attempt log
-            shows the ladder was actually exhausted.
-            Respond with STRICT JSON only:
-            {
-              "verdict": "advance_one|reject_all",
-              "selected_thesis": "string or empty",
-              "rationale": "string",
-              "monitor_bindings_hint": ["string"],
-              "checks_run": ["string"],
-              "workspace_artifacts_read": ["string"],
-              "paper_only": true
-            }
     participants:
       - id: bull
         kind: agent
         spec:
-          model: z-ai/glm-5.1
+          model: z-ai/glm-5.2
           provider: openrouter
           tools: *scout_tools
           prompt: |
@@ -313,47 +261,12 @@ nodes:
             End with STRICT JSON:
             {"verdict":"advance_one|reject_all","thesis":"string","why":"string","checks_run":["string"],"paper_only":true}
 
-      - id: risk
-        kind: agent
-        spec:
-          model: grok-4.5
-          provider: xai-oauth
-          tools: *scout_tools
-          prompt: |
-            You are the RISK officer on a PAPER-ONLY PM desk
-            (round {{ branch.round }}/{{ branch.max_rounds }}). Ignore narrative charm.
-            Score only: adverse selection, path kills, covariance with junk
-            themes, spoiled thesis hashes, and whether monitors would actually
-            fire on the right thing.
-
-            WORKSPACE:
-              dir={{ workspace.dir }}
-              run_dir={{ workspace.run_dir }}
-              previous_runs={{ workspace.previous_runs }}
-
-            Topic: {{ branch.topic }}
-            Prepare: {{ prepare.output }}
-            DD: {{ dd.output }}
-            Prior rounds: {{ branch.transcript }}
-
-            Re-open workspace artifacts and, if needed, live sources before you
-            path-kill. A kill resting on "source unreachable" is invalid unless
-            you actually re-ran the data plane (discover/snapshot, the shipped
-            cpi-calibrate harness, Browserbase) and the attempt log shows the
-            ladder was exhausted. A thesis citing a fixture calibration
-            (entry_eligible false) as its edge is an automatic kill. write_file
-            {{ workspace.run_dir }}/eval_risk_r{{ branch.round }}.json
-
-            End with STRICT JSON:
-            {"verdict":"advance_one|reject_all","thesis":"string","why":"string","checks_run":["string"],"paper_only":true}
-
-  # --- package ExecutionPlan (Terra) — critical ---------------------------
-  # Plan may read/write workspace artifacts but does not re-research the book.
+  # --- compact ExecutionPlan packaging; no new research in this stage -------
   # Schema enforcement still pairs with `pm-desk plan validate` after the run.
   - id: plan
     kind: agent
     spec:
-      model: gpt-5.6-terra
+      model: openai/gpt-5.4-mini
       provider: openrouter
       prompt:
         library: pm-execution-plan-v1
